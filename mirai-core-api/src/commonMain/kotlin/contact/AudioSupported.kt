@@ -11,7 +11,7 @@
 
 package net.mamoe.mirai.contact
 
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.message.data.Audio
 import net.mamoe.mirai.message.data.OfflineAudio
 import net.mamoe.mirai.utils.ExternalResource
@@ -35,6 +35,8 @@ public interface AudioSupported : Contact {
      * 建议使用同一个 [Contact] 进行 [uploadAudio] 和 [sendMessage]. 目标对象不同时的行为是不确定的.
      *
      * 要获取更多语音相关的信息, 参阅 [Audio].
+     *
+     * @param resource 支持 AMR 和 SILK 格式. 若要支持 MP3 格式, 请参考 [mirai-silk-converter](https://github.com/project-mirai/mirai-silk-converter)
      *
      * @throws OverFileSizeMaxException 当语音文件过大而被服务器拒绝上传时. (最大大小约为 1 MB)
      * **注意**: 由于服务器不一定会检查大小, 该异常就不一定会因大小超过 1MB 而抛出.

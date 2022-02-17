@@ -15,7 +15,6 @@ import io.ktor.client.features.*
 import io.ktor.client.request.*
 import io.ktor.client.request.forms.*
 import io.ktor.util.*
-import io.ktor.utils.io.core.*
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.io.core.discardExact
 import kotlinx.io.core.readBytes
@@ -38,13 +37,19 @@ import net.mamoe.mirai.internal.message.*
 import net.mamoe.mirai.internal.message.DeepMessageRefiner.refineDeep
 import net.mamoe.mirai.internal.network.components.EventDispatcher
 import net.mamoe.mirai.internal.network.components.EventDispatcherScopeFlag
-import net.mamoe.mirai.internal.network.highway.*
+import net.mamoe.mirai.internal.network.highway.ChannelKind
+import net.mamoe.mirai.internal.network.highway.ResourceKind
+import net.mamoe.mirai.internal.network.highway.tryDownload
+import net.mamoe.mirai.internal.network.highway.tryServersDownload
 import net.mamoe.mirai.internal.network.protocol.data.jce.SvcDevLoginInfo
 import net.mamoe.mirai.internal.network.protocol.data.proto.ImMsgBody
 import net.mamoe.mirai.internal.network.protocol.data.proto.LongMsg
 import net.mamoe.mirai.internal.network.protocol.data.proto.MsgComm
 import net.mamoe.mirai.internal.network.protocol.data.proto.MsgTransmit
-import net.mamoe.mirai.internal.network.protocol.packet.chat.*
+import net.mamoe.mirai.internal.network.protocol.packet.chat.MultiMsg
+import net.mamoe.mirai.internal.network.protocol.packet.chat.NewContact
+import net.mamoe.mirai.internal.network.protocol.packet.chat.NudgePacket
+import net.mamoe.mirai.internal.network.protocol.packet.chat.PbMessageSvc
 import net.mamoe.mirai.internal.network.protocol.packet.chat.voice.PttStore
 import net.mamoe.mirai.internal.network.protocol.packet.list.FriendList
 import net.mamoe.mirai.internal.network.protocol.packet.login.StatSvc
@@ -52,20 +57,14 @@ import net.mamoe.mirai.internal.network.protocol.packet.sendAndExpect
 import net.mamoe.mirai.internal.network.protocol.packet.summarycard.SummaryCard
 import net.mamoe.mirai.internal.network.psKey
 import net.mamoe.mirai.internal.network.sKey
+import net.mamoe.mirai.internal.utils.ImagePatcher
 import net.mamoe.mirai.internal.utils.MiraiProtocolInternal
 import net.mamoe.mirai.internal.utils.crypto.TEA
 import net.mamoe.mirai.internal.utils.io.serialization.loadAs
-import net.mamoe.mirai.internal.utils.io.serialization.toByteArray
 import net.mamoe.mirai.message.MessageSerializers
 import net.mamoe.mirai.message.action.Nudge
 import net.mamoe.mirai.message.data.*
-import net.mamoe.mirai.message.data.Image.Key.IMAGE_ID_REGEX
-import net.mamoe.mirai.message.data.Image.Key.IMAGE_RESOURCE_ID_REGEX_1
-import net.mamoe.mirai.message.data.Image.Key.IMAGE_RESOURCE_ID_REGEX_2
 import net.mamoe.mirai.utils.*
-import net.mamoe.mirai.utils.ExternalResource.Companion.toExternalResource
-import kotlin.math.absoluteValue
-import kotlin.random.Random
 
 internal fun getMiraiImpl() = Mirai as MiraiImpl
 
@@ -140,7 +139,7 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
         }
     }
 
-    @Suppress("DEPRECATION")
+    @Suppress("DEPRECATION_ERROR")
     override val BotFactory: BotFactory
         get() = BotFactoryImpl
 
@@ -310,7 +309,7 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
         }
         if (event is BotEvent) {
             val bot = event.bot
-            if (bot is QQAndroidBot) {
+            if (bot is AbstractBot) {
                 bot.components[EventDispatcher].broadcast(event)
             }
         } else {
@@ -467,13 +466,19 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
             is OnlineMessageSourceToGroupImpl,
             is OnlineMessageSourceFromGroupImpl
             -> {
-                val group = when (source) {
-                    is OnlineMessageSourceToGroupImpl -> source.target
-                    is OnlineMessageSourceFromGroupImpl -> source.group
+                val group: Group = when (source) {
+                    is OnlineMessageSourceToGroupImpl -> source.subject
+                    is OnlineMessageSourceFromGroupImpl -> source.subject
                     else -> error("stub")
                 }
                 if (bot.id != source.fromId) {
-                    group.checkBotPermission(MemberPermission.ADMINISTRATOR)
+                    // if member leave, messageSource will throw exception(#1661)
+                    when (group[source.fromId]?.permission ?: MemberPermission.MEMBER) {
+                        MemberPermission.MEMBER -> group.checkBotPermission(MemberPermission.ADMINISTRATOR)
+                        MemberPermission.ADMINISTRATOR -> group.checkBotPermission(MemberPermission.OWNER)
+                        // bot cannot be owner
+                        MemberPermission.OWNER -> throw PermissionDeniedException("Permission denied: cannot recall message from owner")
+                    }
                 }
 
                 network.run {
@@ -585,7 +590,7 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
                         @OptIn(InternalAPI::class) // ktor bug
                         append(
                             "cookie",
-                            "uin=o${bot.id}; skey=${bot.sKey}; p_uin=o${bot.id};"
+                            "uin=o${bot.id}; skey=${bot.sKey}; p_uin=o${bot.id}; p_skey=${bot.psKey("qqweb.qq.com")};"
                         )
                     }
                 }
@@ -626,70 +631,18 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
         sendMessageHandler: SendMessageHandler<*>,
         message: Collection<ForwardMessage.INode>,
         isLong: Boolean,
-    ): String = with(bot.asQQAndroidBot()) {
+    ): String {
+        bot.asQQAndroidBot()
         message.forEach {
             it.messageChain.ensureSequenceIdAvailable()
         }
+        val uploader = MultiMsgUploader(
+            client = bot.client,
+            isLong = isLong,
+            handler = sendMessageHandler,
+        ).also { it.emitMain(message) }
 
-
-        val data = message.calculateValidationData(
-            client = client,
-            random = Random.nextInt().absoluteValue,
-            sendMessageHandler,
-            isLong,
-        )
-
-        val response = network.run {
-            MultiMsg.ApplyUp.createForGroup(
-                buType = if (isLong) 1 else 2,
-                client = bot.client,
-                messageData = data,
-                dstUin = sendMessageHandler.targetUin
-            ).sendAndExpect()
-        }
-
-        val resId: String
-        when (response) {
-            is MultiMsg.ApplyUp.Response.MessageTooLarge ->
-                error(
-                    "Internal error: message is too large, but this should be handled before sending. "
-                )
-            is MultiMsg.ApplyUp.Response.RequireUpload -> {
-                resId = response.proto.msgResid
-
-                val body = LongMsg.ReqBody(
-                    subcmd = 1,
-                    platformType = 9,
-                    termType = 5,
-                    msgUpReq = listOf(
-                        LongMsg.MsgUpReq(
-                            msgType = 3, // group
-                            dstUin = sendMessageHandler.targetUin,
-                            msgId = 0,
-                            msgUkey = response.proto.msgUkey,
-                            needCache = 0,
-                            storeType = 2,
-                            msgContent = data.data
-                        )
-                    )
-                ).toByteArray(LongMsg.ReqBody.serializer())
-
-                body.toExternalResource().use { resource ->
-                    Highway.uploadResourceBdh(
-                        bot = bot,
-                        resource = resource,
-                        kind = when (isLong) {
-                            true -> ResourceKind.LONG_MESSAGE
-                            false -> ResourceKind.FORWARD_MESSAGE
-                        },
-                        commandId = 27,
-                        initialTicket = response.proto.msgSig
-                    )
-                }
-            }
-        }
-
-        return resId
+        return uploader.uploadAndReturnResId()
     }
 
     override suspend fun solveNewFriendRequestEvent(
@@ -770,7 +723,7 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
     ): String {
         bot.asQQAndroidBot().network.run {
             val response = PttStore.GroupPttDown(bot.client, groupId, dstUin, md5).sendAndExpect()
-            return "http://${response.strDomain}${response.downPara.encodeToString()}"
+            return "http://${response.strDomain}${response.downPara.decodeToString()}"
         }
     }
 
@@ -805,17 +758,6 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
         }
     }
 
-    override fun createImage(imageId: String): Image {
-        return when {
-            imageId matches IMAGE_ID_REGEX -> OfflineGroupImage(imageId)
-            imageId matches IMAGE_RESOURCE_ID_REGEX_1 -> OfflineFriendImage(imageId)
-            imageId matches IMAGE_RESOURCE_ID_REGEX_2 -> OfflineFriendImage(imageId)
-            else ->
-                @Suppress("INVISIBLE_MEMBER")
-                throw IllegalArgumentException("Illegal imageId: $imageId. $ILLEGAL_IMAGE_ID_EXCEPTION_MESSAGE")
-        }
-    }
-
     override fun createFileMessage(id: String, internalId: Int, name: String, size: Long): FileMessage {
         return FileMessageImpl(id, internalId, name, size)
     }
@@ -839,8 +781,8 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
     }
 
     override suspend fun sendNudge(bot: Bot, nudge: Nudge, receiver: Contact): Boolean {
-        if (bot.configuration.protocol != BotConfiguration.MiraiProtocol.ANDROID_PHONE) {
-            throw UnsupportedOperationException("nudge is supported only with protocol ANDROID_PHONE")
+        if ((bot.configuration.protocol != BotConfiguration.MiraiProtocol.ANDROID_PHONE) && (bot.configuration.protocol != BotConfiguration.MiraiProtocol.IPAD)) {
+            throw UnsupportedOperationException("nudge is supported only with protocol ANDROID_PHONE or IPAD")
         }
         bot.asQQAndroidBot()
 
@@ -885,13 +827,21 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
     )
 
     override suspend fun downloadLongMessage(bot: Bot, resourceId: String): MessageChain {
-        return downloadMultiMsgTransmit(bot, resourceId, ResourceKind.LONG_MESSAGE).msg
-            .toMessageChainNoSource(bot, 0, MessageSourceKind.GROUP)
-            .refineDeep(bot)
+        try {
+            return downloadMultiMsgTransmit(bot, resourceId, ResourceKind.LONG_MESSAGE).msg
+                .toMessageChainNoSource(bot, 0, MessageSourceKind.GROUP)
+                .refineDeep(bot)
+        } catch (error: Throwable) {
+            throw IllegalStateException("Failed to download long message `$resourceId`", error)
+        }
     }
 
     override suspend fun downloadForwardMessage(bot: Bot, resourceId: String): List<ForwardMessage.Node> {
-        return downloadMultiMsgTransmit(bot, resourceId, ResourceKind.FORWARD_MESSAGE).toForwardMessageNodes(bot)
+        try {
+            return downloadMultiMsgTransmit(bot, resourceId, ResourceKind.FORWARD_MESSAGE).toForwardMessageNodes(bot)
+        } catch (error: Throwable) {
+            throw IllegalStateException("Failed to download forward message `$resourceId`", error)
+        }
     }
 
     internal open suspend fun MsgTransmit.PbMultiMsgNew.toForwardMessageNodes(
@@ -972,7 +922,7 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
 
                 val down = longResp.msgDownRsp.single()
                 check(down.result == 0) {
-                    "Message download failed, result=${down.result}, resId=${down.msgResid.encodeToString()}, msgContent=${down.msgContent.toUHexString()}"
+                    "Message download failed, result=${down.result}, resId=${down.msgResid.decodeToString()}, msgContent=${down.msgContent.toUHexString()}"
                 }
 
                 val content = down.msgContent.ungzip()

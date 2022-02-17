@@ -39,7 +39,7 @@ internal fun getRandomByteArray(length: Int): ByteArray = ByteArray(length) { Ra
 // [114.221.148.179:14000, 113.96.13.125:8080, 14.22.3.51:8080, 42.81.172.207:443, 114.221.144.89:80, 125.94.60.148:14000, 42.81.192.226:443, 114.221.148.233:8080, msfwifi.3g.qq.com:8080, 42.81.172.22:80]
 
 internal val DefaultServerList: MutableSet<Pair<String, Int>> =
-    "msfwifi.3g.qq.com:8080, 14.215.138.110:8080, 113.96.12.224:8080, 157.255.13.77:14000, 120.232.18.27:443, 183.3.235.162:14000, 163.177.89.195:443, 183.232.94.44:80, 203.205.255.224:8080, 203.205.255.221:8080"
+    "msfwifi.3g.qq.com:8080"
         .split(", ")
         .map {
             val host = it.substringBefore(':')
@@ -167,7 +167,7 @@ internal open class QQAndroidClient(
 }
 
 internal val QQAndroidClient.apkId: ByteArray get() = "com.tencent.mobileqq".toByteArray()
-internal val QQAndroidClient.ssoVersion: Int get() = 15
+internal val QQAndroidClient.ssoVersion: Int get() = protocol.ssoVersion
 internal val QQAndroidClient.networkType: NetworkType get() = NetworkType.WIFI
 internal val QQAndroidClient.appClientVersion: Int get() = 0
 internal val QQAndroidClient.mainSigMap: Int get() = protocol.mainSigMap

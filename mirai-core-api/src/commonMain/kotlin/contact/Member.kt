@@ -12,7 +12,7 @@
 
 package net.mamoe.mirai.contact
 
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.event.events.*
 import net.mamoe.mirai.message.MessageReceipt
@@ -57,7 +57,7 @@ public interface Member : User {
     public val nameCard: String
 
     /**
-     * 群头衔.
+     * 群特殊头衔.
      *
      * 为 [AnonymousMember] 时一定是 `"匿名"`
      *

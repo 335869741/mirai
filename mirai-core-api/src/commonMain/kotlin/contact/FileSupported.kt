@@ -10,22 +10,35 @@
 
 package net.mamoe.mirai.contact
 
+import net.mamoe.mirai.contact.file.RemoteFiles
+import net.mamoe.mirai.utils.DeprecatedSinceMirai
 import net.mamoe.mirai.utils.NotStableForInheritance
-import net.mamoe.mirai.utils.RemoteFile
 
 /**
  * 支持文件操作的 [Contact]. 目前仅 [Group].
  *
- * 获取文件操作相关示例: [RemoteFile]
+ * 获取文件操作相关示例: [RemoteFiles]
  *
  * @since 2.5
+ *
+ * @see RemoteFiles
  */
 @NotStableForInheritance
 public interface FileSupported : Contact {
     /**
-     * 文件根目录. 可通过 [RemoteFile.listFiles] 获取目录下文件列表.
+     * 文件根目录. 可通过 [net.mamoe.mirai.utils.RemoteFile.listFiles] 获取目录下文件列表.
      *
      * @since 2.5
      */
-    public val filesRoot: RemoteFile
+    @Suppress("DEPRECATION")
+    @Deprecated("Please use files instead.", replaceWith = ReplaceWith("files.root")) // deprecated since 2.8.0-RC
+    @DeprecatedSinceMirai(warningSince = "2.8")
+    public val filesRoot: net.mamoe.mirai.utils.RemoteFile
+
+    /**
+     * 获取远程文件列表 (管理器).
+     *
+     * @since 2.8
+     */
+    public val files: RemoteFiles
 }

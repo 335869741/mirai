@@ -9,6 +9,7 @@
 
 package net.mamoe.mirai.internal.network.notice.group
 
+import net.mamoe.mirai.Bot
 import net.mamoe.mirai.contact.Member
 import net.mamoe.mirai.event.AbstractEvent
 import net.mamoe.mirai.event.Event
@@ -16,6 +17,7 @@ import net.mamoe.mirai.event.broadcast
 import net.mamoe.mirai.event.events.GroupMessageEvent
 import net.mamoe.mirai.event.events.GroupMessageSyncEvent
 import net.mamoe.mirai.event.events.MemberCardChangeEvent
+import net.mamoe.mirai.event.events.MemberSpecialTitleChangeEvent
 import net.mamoe.mirai.internal.contact.GroupImpl
 import net.mamoe.mirai.internal.contact.NormalMemberImpl
 import net.mamoe.mirai.internal.contact.info
@@ -43,6 +45,7 @@ internal class GroupMessageProcessor(
     private val logger: MiraiLogger,
 ) : SimpleNoticeProcessor<MsgOnlinePush.PbPushMsg>(type()) {
     internal data class SendGroupMessageReceipt(
+        val bot: Bot?,
         val messageRandom: Int,
         val sequenceId: Int,
         val fromAppId: Int,
@@ -52,7 +55,7 @@ internal class GroupMessageProcessor(
         }
 
         companion object {
-            val EMPTY = SendGroupMessageReceipt(0, 0, 0)
+            val EMPTY = SendGroupMessageReceipt(null, 0, 0, 0)
         }
     }
 
@@ -80,7 +83,7 @@ internal class GroupMessageProcessor(
                 // 3116=group music share
                 // 2021=group file
                 // message sent by bot
-                collect(SendGroupMessageReceipt(messageRandom, msgHead.msgSeq, msgHead.fromAppid))
+                collect(SendGroupMessageReceipt(bot, messageRandom, msgHead.msgSeq, msgHead.fromAppid))
                 return
             }
             // else: sync form other device
@@ -111,7 +114,7 @@ internal class GroupMessageProcessor(
         val nameCard: MemberNick
 
         if (anonymous != null) { // anonymous member
-            sender = group.newAnonymous(anonymous.anonNick.encodeToString(), anonymous.anonId.encodeBase64())
+            sender = group.newAnonymous(anonymous.anonNick.decodeToString(), anonymous.anonId.encodeBase64())
             nameCard = sender.generateMemberNickFromMember()
         } else { // normal member chat
             sender = group[msgHead.fromUin] ?: kotlin.run {
@@ -123,6 +126,14 @@ internal class GroupMessageProcessor(
 
         sender.info?.castOrNull<MemberInfoImpl>()?.run {
             lastSpeakTimestamp = currentTimeSeconds().toInt()
+        }
+        sender.castOrNull<NormalMemberImpl>()?.run {
+            val specialTitleNow = extraInfo?.senderTitle?.decodeToString().orEmpty()
+            if (specialTitle != specialTitleNow) {
+                //群特殊头衔 只有群主才能进行操作
+                collect(MemberSpecialTitleChangeEvent(specialTitle, specialTitleNow, this, group.owner))
+                _specialTitle = specialTitleNow
+            }
         }
 
         if (isFromSelfAccount) {
@@ -137,7 +148,6 @@ internal class GroupMessageProcessor(
             )
             return
         } else {
-
             broadcastNameCardChangedEventIfNecessary(sender, nameCard)
 
             collect(
@@ -190,9 +200,9 @@ internal class GroupMessageProcessor(
         if (this[0] == 0x0A.toByte()) {
             val nameBuf = loadAs(Oidb0x8fc.CommCardNameBuf.serializer())
             if (nameBuf.richCardName.isNotEmpty()) {
-                return@runCatching nameBuf.richCardName.joinToString("") { it.text.encodeToString() }
+                return@runCatching nameBuf.richCardName.joinToString("") { it.text.decodeToString() }
             }
         }
         return@runCatching null
-    }.getOrNull() ?: encodeToString()
+    }.getOrNull() ?: decodeToString()
 }

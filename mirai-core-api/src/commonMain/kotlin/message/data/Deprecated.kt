@@ -18,6 +18,7 @@ import kotlinx.serialization.Polymorphic
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import net.mamoe.mirai.IMirai
+import net.mamoe.mirai.utils.DeprecatedSinceMirai
 import net.mamoe.mirai.utils.safeCast
 
 
@@ -35,8 +36,9 @@ import net.mamoe.mirai.utils.safeCast
         "MessageOrigin",
         "net.mamoe.mirai.message.data.MessageOrigin",
     ),
-    level = DeprecationLevel.ERROR
+    level = DeprecationLevel.HIDDEN
 )
+@DeprecatedSinceMirai(errorSince = "2.6", hiddenSince = "2.8")
 public class RichMessageOrigin
 @Deprecated(
     "Use MessageOrigin instead.",
@@ -44,8 +46,9 @@ public class RichMessageOrigin
         "MessageOrigin(origin, resourceId, kind)",
         "net.mamoe.mirai.message.data.MessageOrigin",
     ),
-    level = DeprecationLevel.ERROR
+    level = DeprecationLevel.HIDDEN
 )
+@DeprecatedSinceMirai(errorSince = "2.6", hiddenSince = "2.8")
 constructor(
     /**
      * 原 [RichMessage].
@@ -104,8 +107,9 @@ constructor(
             "MessageOrigin",
             "net.mamoe.mirai.message.data.MessageOrigin",
         ),
-        level = DeprecationLevel.ERROR
+        level = DeprecationLevel.HIDDEN
     )
+    @DeprecatedSinceMirai(errorSince = "2.6", hiddenSince = "2.8")
     @Suppress("DEPRECATION_ERROR")
     public companion object Key : AbstractMessageKey<RichMessageOrigin>({ it.safeCast() }) {
         public const val SERIAL_NAME: String = "RichMessageOrigin"
@@ -120,8 +124,9 @@ constructor(
 @Deprecated(
     "Use MessageOriginKind",
     ReplaceWith("MessageOriginKind", "net.mamoe.mirai.message.data.MessageOriginKind"),
-    level = DeprecationLevel.ERROR
+    level = DeprecationLevel.HIDDEN
 )
+@DeprecatedSinceMirai(errorSince = "2.6", hiddenSince = "2.8")
 public enum class RichMessageKind {
     /**
      * 长消息

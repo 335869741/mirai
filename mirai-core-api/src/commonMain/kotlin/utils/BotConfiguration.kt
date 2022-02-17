@@ -27,7 +27,7 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.coroutineContext
 import kotlin.time.Duration
-import kotlin.time.ExperimentalTime
+import kotlin.time.Duration.Companion.milliseconds
 
 /**
  * [Bot] 配置. 用于 [BotFactory.newBot]
@@ -69,7 +69,10 @@ public open class BotConfiguration { // open for Java
             ignoreUnknownKeys = true
             prettyPrint = true
         }
-    }.getOrElse { Json {} }
+    }.getOrElse {
+        @Suppress("JSON_FORMAT_REDUNDANT_DEFAULT") // compatible for older versions
+        Json {}
+    }
 
     ///////////////////////////////////////////////////////////////////////////
     // Coroutines
@@ -193,11 +196,19 @@ public open class BotConfiguration { // open for Java
     public var heartbeatTimeoutMillis: Long = 5.secondsToMillis
 
     /** 心跳失败后的第一次重连前的等待时间. */
-    @Deprecated("Useless since new network. Please just remove this.", level = DeprecationLevel.WARNING)
+    @Deprecated(
+        "Useless since new network. Please just remove this.",
+        level = DeprecationLevel.HIDDEN
+    ) // deprecated since 2.7, error since 2.8
+    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.8", hiddenSince = "2.10")
     public var firstReconnectDelayMillis: Long = 5.secondsToMillis
 
     /** 重连失败后, 继续尝试的每次等待时间 */
-    @Deprecated("Useless since new network. Please just remove this.", level = DeprecationLevel.WARNING)
+    @Deprecated(
+        "Useless since new network. Please just remove this.",
+        level = DeprecationLevel.HIDDEN
+    ) // deprecated since 2.7, error since 2.8
+    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.8", hiddenSince = "2.10")
     public var reconnectPeriodMillis: Long = 5.secondsToMillis
 
     /** 最多尝试多少次重连 */
@@ -244,6 +255,20 @@ public open class BotConfiguration { // open for Java
          * Android 手表.
          */
         ANDROID_WATCH,
+
+        /**
+         * iPad - 来自MiraiGo
+         *
+         * @since 2.8
+         */
+        IPAD,
+
+        /**
+         * MacOS - 来自MiraiGo
+         *
+         * @since 2.8
+         */
+        MACOS,
 
     }
 
@@ -388,7 +413,7 @@ public open class BotConfiguration { // open for Java
     @ConfigurationDsl
     public fun redirectBotLogToFile(
         file: File = File("mirai.log"),
-        identity: (bot: Bot) -> String = { "Net ${it.id}" }
+        identity: (bot: Bot) -> String = { "Bot ${it.id}" }
     ) {
         require(!file.isDirectory) { "file must not be a dir" }
         botLoggerSupplier = { SingleFileLogger(identity(it), workingDir.resolve(file)) }
@@ -405,7 +430,7 @@ public open class BotConfiguration { // open for Java
     public fun redirectBotLogToDirectory(
         dir: File = File("logs"),
         retain: Long = 1.weeksToMillis,
-        identity: (bot: Bot) -> String = { "Net ${it.id}" }
+        identity: (bot: Bot) -> String = { "Bot ${it.id}" }
     ) {
         require(!dir.isFile) { "dir must not be a file" }
         botLoggerSupplier = { DirectoryLogger(identity(it), workingDir.resolve(dir), retain) }
@@ -480,10 +505,9 @@ public open class BotConfiguration { // open for Java
 
         /**
          * 在有修改时自动保存间隔. 默认 60 秒. 在每次登录完成后有修改时都会立即保存一次.
-         */
-        @ExperimentalTime
+         */ // was @ExperimentalTime before 2.9
         public inline var saveInterval: Duration
-            @JvmSynthetic inline get() = Duration.milliseconds(saveIntervalMillis)
+            @JvmSynthetic inline get() = saveIntervalMillis.milliseconds
             @JvmSynthetic inline set(v) {
                 saveIntervalMillis = v.inWholeMilliseconds
             }
@@ -563,10 +587,6 @@ public open class BotConfiguration { // open for Java
             new.heartbeatTimeoutMillis = heartbeatTimeoutMillis
             new.statHeartbeatPeriodMillis = statHeartbeatPeriodMillis
             new.heartbeatStrategy = heartbeatStrategy
-            @Suppress("DEPRECATION")
-            new.firstReconnectDelayMillis = firstReconnectDelayMillis
-            @Suppress("DEPRECATION")
-            new.reconnectPeriodMillis = reconnectPeriodMillis
             new.reconnectionRetryTimes = reconnectionRetryTimes
             new.autoReconnectOnForceOffline = autoReconnectOnForceOffline
             new.loginSolver = loginSolver
@@ -617,7 +637,11 @@ public inline fun BotConfiguration(block: BotConfiguration.() -> Unit): BotConfi
 }
 
 internal val deviceInfoStub: (Bot) -> DeviceInfo = {
-    MiraiLogger.TopLevel.warning("未指定设备信息, 已使用随机设备信息. 请查看 BotConfiguration.deviceInfo 以获取更多信息.")
-    MiraiLogger.TopLevel.warning("Device info isn't specified. Please refer to BotConfiguration.deviceInfo for more information")
+    logger.warning("未指定设备信息, 已使用随机设备信息. 请查看 BotConfiguration.deviceInfo 以获取更多信息.")
+    logger.warning("Device info isn't specified. Please refer to BotConfiguration.deviceInfo for more information")
     DeviceInfo.random()
+}
+
+private val logger by lazy {
+    MiraiLogger.Factory.create(BotConfiguration::class)
 }

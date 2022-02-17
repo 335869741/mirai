@@ -13,12 +13,13 @@
 package net.mamoe.mirai.contact
 
 import kotlinx.coroutines.CoroutineScope
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.contact.announcement.Announcements
 import net.mamoe.mirai.event.events.*
 import net.mamoe.mirai.message.MessageReceipt
 import net.mamoe.mirai.message.data.*
+import net.mamoe.mirai.utils.DeprecatedSinceMirai
 import net.mamoe.mirai.utils.ExternalResource
 import net.mamoe.mirai.utils.MiraiExperimentalApi
 import net.mamoe.mirai.utils.NotStableForInheritance
@@ -50,7 +51,6 @@ import net.mamoe.mirai.utils.NotStableForInheritance
  *
  * 可通过 [Group.announcements] 获取公告支持. 可在 [Announcements] 查看详细文档.
  *
- * ##
  */
 @NotStableForInheritance
 public interface Group : Contact, CoroutineScope, FileSupported, AudioSupported {
@@ -188,12 +188,13 @@ public interface Group : Contact, CoroutineScope, FileSupported, AudioSupported 
     /**
      * 上传一个语音消息以备发送. 该方法已弃用且将在未来版本删除, 请使用 [uploadAudio].
      */
-    @Suppress("DEPRECATION")
+    @Suppress("DEPRECATION", "DEPRECATION_ERROR")
     @Deprecated(
         "use uploadAudio",
         replaceWith = ReplaceWith("uploadAudio(resource)"),
-        level = DeprecationLevel.WARNING
-    )
+        level = DeprecationLevel.ERROR
+    ) // deprecated since 2.7
+    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10")
     public suspend fun uploadVoice(resource: ExternalResource): Voice
 
     /**
@@ -239,9 +240,10 @@ public interface GroupSettings {
      * @see Group.announcements
      */
     @Deprecated(
-        level = DeprecationLevel.WARNING,
+        level = DeprecationLevel.ERROR,
         message = "group.announcements.asFlow().filter { it.parameters.sendToNewMember }.firstOrNull()",
-    )
+    ) // deprecated since 2.7
+    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10")
     public var entranceAnnouncement: String
 
     /**
@@ -273,7 +275,7 @@ public interface GroupSettings {
     /**
      * 匿名聊天
      */
-    public val isAnonymousChatEnabled: Boolean
+    public var isAnonymousChatEnabled: Boolean
 }
 
 /**

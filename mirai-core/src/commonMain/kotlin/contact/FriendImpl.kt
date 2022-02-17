@@ -17,10 +17,12 @@ package net.mamoe.mirai.internal.contact
 import net.mamoe.mirai.LowLevelApi
 import net.mamoe.mirai.Mirai
 import net.mamoe.mirai.contact.Friend
+import net.mamoe.mirai.contact.roaming.RoamingMessages
 import net.mamoe.mirai.event.events.FriendMessagePostSendEvent
 import net.mamoe.mirai.event.events.FriendMessagePreSendEvent
 import net.mamoe.mirai.internal.QQAndroidBot
 import net.mamoe.mirai.internal.contact.info.FriendInfoImpl
+import net.mamoe.mirai.internal.contact.roaming.RoamingMessagesImplFriend
 import net.mamoe.mirai.internal.message.OfflineAudioImpl
 import net.mamoe.mirai.internal.network.highway.*
 import net.mamoe.mirai.internal.network.protocol.data.proto.Cmd0x346
@@ -34,6 +36,7 @@ import net.mamoe.mirai.internal.utils.io.serialization.toByteArray
 import net.mamoe.mirai.message.MessageReceipt
 import net.mamoe.mirai.message.data.Message
 import net.mamoe.mirai.message.data.OfflineAudio
+import net.mamoe.mirai.spi.AudioToSilkService
 import net.mamoe.mirai.utils.*
 import kotlin.contracts.ExperimentalContracts
 import kotlin.contracts.contract
@@ -60,9 +63,11 @@ internal class FriendImpl(
     parentCoroutineContext: CoroutineContext,
     override val info: FriendInfoImpl,
 ) : Friend, AbstractUser(bot, parentCoroutineContext, info) {
+    override var nick: String by info::nick
+    override var remark: String by info::remark
     override suspend fun delete() {
-        check(bot.friends[this.id] != null) {
-            "Friend ${this.id} had already been deleted"
+        check(bot.friends[id] != null) {
+            "Friend $id had already been deleted"
         }
         bot.network.run {
             FriendList.DelFriend.invoke(bot.client, this@FriendImpl).sendAndExpect().also {
@@ -81,15 +86,17 @@ internal class FriendImpl(
 
     override fun toString(): String = "Friend($id)"
 
-    override suspend fun uploadAudio(resource: ExternalResource): OfflineAudio = resource.withAutoClose {
+    override suspend fun uploadAudio(resource: ExternalResource): OfflineAudio = AudioToSilkService.convert(
+        resource
+    ).useAutoClose { res ->
         var audio: OfflineAudioImpl? = null
         kotlin.runCatching {
             val resp = Highway.uploadResourceBdh(
                 bot = bot,
-                resource = resource,
+                resource = res,
                 kind = ResourceKind.PRIVATE_AUDIO,
                 commandId = 26,
-                extendInfo = PttStore.C2C.createC2CPttStoreBDHExt(bot, this@FriendImpl.uin, resource)
+                extendInfo = PttStore.C2C.createC2CPttStoreBDHExt(bot, this@FriendImpl.uin, res)
                     .toByteArray(Cmd0x346.ReqBody.serializer())
             )
             // resp._miraiContentToString("UV resp")
@@ -98,44 +105,44 @@ internal class FriendImpl(
                 error("Upload failed")
             }
             audio = OfflineAudioImpl(
-                filename = "${resource.md5.toUHexString("")}.amr",
-                fileMd5 = resource.md5,
-                fileSize = resource.size,
-                codec = resource.audioCodec,
+                filename = "${res.md5.toUHexString("")}.amr",
+                fileMd5 = res.md5,
+                fileSize = res.size,
+                codec = res.audioCodec,
                 originalPtt = ImMsgBody.Ptt(
                     fileType = 4,
                     srcUin = bot.uin,
                     fileUuid = c346resp.msgApplyUploadRsp.uuid,
-                    fileMd5 = resource.md5,
-                    fileName = resource.md5 + ".amr".toByteArray(),
-                    fileSize = resource.size.toInt(),
+                    fileMd5 = res.md5,
+                    fileName = res.md5 + ".amr".toByteArray(),
+                    fileSize = res.size.toInt(),
                     boolValid = true,
                 )
             )
         }.recoverCatchingSuppressed {
-            when (val resp = PttStore.GroupPttUp(bot.client, bot.id, id, resource).sendAndExpect(bot)) {
+            when (val resp = PttStore.GroupPttUp(bot.client, bot.id, id, res).sendAndExpect(bot)) {
                 is PttStore.GroupPttUp.Response.RequireUpload -> {
                     tryServersUpload(
                         bot,
                         resp.uploadIpList.zip(resp.uploadPortList),
-                        resource.size,
+                        res.size,
                         ResourceKind.GROUP_AUDIO,
                         ChannelKind.HTTP
                     ) { ip, port ->
-                        Mirai.Http.postPtt(ip, port, resource, resp.uKey, resp.fileKey)
+                        Mirai.Http.postPtt(ip, port, res, resp.uKey, resp.fileKey)
                     }
                     audio = OfflineAudioImpl(
-                        filename = "${resource.md5.toUHexString("")}.amr",
-                        fileMd5 = resource.md5,
-                        fileSize = resource.size,
-                        codec = resource.audioCodec,
+                        filename = "${res.md5.toUHexString("")}.amr",
+                        fileMd5 = res.md5,
+                        fileSize = res.size,
+                        codec = res.audioCodec,
                         originalPtt = ImMsgBody.Ptt(
                             fileType = 4,
                             srcUin = bot.uin,
                             fileUuid = resp.fileId.toByteArray(),
-                            fileMd5 = resource.md5,
-                            fileName = resource.md5 + ".amr".toByteArray(),
-                            fileSize = resource.size.toInt(),
+                            fileMd5 = res.md5,
+                            fileName = res.md5 + ".amr".toByteArray(),
+                            fileSize = res.size.toInt(),
                             boolValid = true,
                         )
                     )
@@ -145,4 +152,6 @@ internal class FriendImpl(
 
         return audio!!
     }
+
+    override val roamingMessages: RoamingMessages by lazy { RoamingMessagesImplFriend(this) }
 }

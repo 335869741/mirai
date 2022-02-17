@@ -16,7 +16,7 @@ package net.mamoe.mirai
 
 import io.ktor.client.*
 import io.ktor.client.engine.okhttp.*
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.contact.*
 import net.mamoe.mirai.data.UserProfile
 import net.mamoe.mirai.event.Event
@@ -113,6 +113,7 @@ public interface IMirai : LowLevelApiAccessor {
      */
     public fun getUin(contactOrBot: ContactOrBot): Long {
         return if (contactOrBot is Group)
+            @Suppress("DEPRECATION")
             calculateGroupUinByGroupCode(contactOrBot.id)
         else contactOrBot.id
     }
@@ -121,6 +122,10 @@ public interface IMirai : LowLevelApiAccessor {
      * 使用 groupCode 计算 groupUin. 这两个值仅在 mirai 内部协议区分, 一般人使用时无需在意.
      * @see getUin
      */
+    @Deprecated(
+        "The result might be wrong. Consider using getUin",
+        level = DeprecationLevel.WARNING
+    ) // deprecated since 2.8.0-RC, see #1479
     public fun calculateGroupUinByGroupCode(groupCode: Long): Long {
         var left: Long = groupCode / 1000000L
         when (left) {
@@ -175,12 +180,13 @@ public interface IMirai : LowLevelApiAccessor {
     public suspend fun sendNudge(bot: Bot, nudge: Nudge, receiver: Contact): Boolean
 
     /**
-     * 构造 [Image]
+     * 构造 [Image]. 请优先使用 [Image.Factory.create].
      *
      * @see Image
      * @see Image.fromId
+     * @see Image.Factory.create
      */
-    public fun createImage(imageId: String): Image
+    public fun createImage(imageId: String): Image = Image.Builder.newBuilder(imageId).build()
 
     /**
      * 创建一个 [FileMessage]. [name] 与 [size] 只供本地使用, 发送消息时只会使用 [id] 和 [internalId].

@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -11,26 +11,25 @@
 
 package net.mamoe.mirai.utils
 
+import kotlinx.atomicfu.atomic
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Mirai
 import net.mamoe.mirai.contact.Contact
 import net.mamoe.mirai.contact.Contact.Companion.sendImage
 import net.mamoe.mirai.contact.Contact.Companion.uploadImage
 import net.mamoe.mirai.contact.FileSupported
 import net.mamoe.mirai.contact.Group
-import net.mamoe.mirai.internal.utils.ExternalResourceImplByByteArray
-import net.mamoe.mirai.internal.utils.ExternalResourceImplByFile
+import net.mamoe.mirai.internal.utils.*
 import net.mamoe.mirai.message.MessageReceipt
 import net.mamoe.mirai.message.data.FileMessage
 import net.mamoe.mirai.message.data.Image
 import net.mamoe.mirai.message.data.sendTo
+import net.mamoe.mirai.utils.AbstractExternalResource.ResourceCleanCallback
 import net.mamoe.mirai.utils.ExternalResource.Companion.sendAsImageTo
 import net.mamoe.mirai.utils.ExternalResource.Companion.toExternalResource
 import net.mamoe.mirai.utils.ExternalResource.Companion.uploadAsImage
-import net.mamoe.mirai.utils.RemoteFile.Companion.sendFile
-import net.mamoe.mirai.utils.RemoteFile.Companion.uploadFile
 import java.io.*
 import kotlin.contracts.InvocationKind
 import kotlin.contracts.contract
@@ -133,6 +132,27 @@ public interface ExternalResource : Closeable {
         return generateImageId(md5, formatName.ifEmpty { DEFAULT_FORMAT_NAME })
     }
 
+    /**
+     * 该 [ExternalResource] 的数据来源, 可能有以下的返回
+     *
+     * - [File] 本地文件
+     * - [java.nio.file.Path] 某个具体文件路径
+     * - [java.nio.ByteBuffer] RAM
+     * - [java.net.URI] uri
+     * - [ByteArray] RAM
+     * - Or more...
+     *
+     * implementation note:
+     *
+     * - 对于无法二次读取的数据来源 (如 [InputStream]), 返回 `null`
+     * - 对于一个来自网络的资源, 请返回 [java.net.URI] (not URL, 或者其他库的 URI/URL 类型)
+     * - 不要返回 [String], 没有约定 [String] 代表什么
+     * - 数据源外漏会严重影响 [inputStream] 等的执行的可以返回 `null` (如 [RandomAccessFile])
+     *
+     * @since 2.8.0
+     */
+    public val origin: Any? get() = null
+
     public companion object {
         /**
          * 在无法识别文件格式时使用的默认格式名. "mirai".
@@ -157,7 +177,9 @@ public interface ExternalResource : Closeable {
         @JvmName("create")
         public fun File.toExternalResource(formatName: String? = null): ExternalResource =
             // although RandomAccessFile constructor throws IOException, actual performance influence is minor so not propagating IOException
-            RandomAccessFile(this, "r").toExternalResource(formatName)
+            RandomAccessFile(this, "r").toExternalResource(formatName).also {
+                it.cast<ExternalResourceImplByFile>().origin = this@toExternalResource
+            }
 
         /**
          * 创建 [ExternalResource].
@@ -203,24 +225,25 @@ public interface ExternalResource : Closeable {
         public fun InputStream.toExternalResource(formatName: String? = null): ExternalResource =
             Mirai.FileCacheStrategy.newCache(this, formatName)
 
-        /**
-         * 创建一个在 _使用一次_ 后就会自动 [close] 的 [ExternalResource].
-         *
-         * @since 2.8
+        // endregion
+
+
+        /* note:
+        于 2.8.0-M1 添加 (#1392)
+
+        于 2.8.0-RC 移动至 `toExternalResource`(#1588)
          */
         @JvmName("createAutoCloseable")
         @JvmStatic
-        public fun ExternalResource.toAutoCloseable(): ExternalResource {
-            return if (isAutoClose) this else {
-                val delegate = this
-                object : ExternalResource by delegate {
-                    override val isAutoClose: Boolean get() = true
-                    override fun toString(): String = "ExternalResourceWithAutoClose(delegate=$delegate)"
-                }
-            }
+        @Deprecated(
+            level = DeprecationLevel.HIDDEN,
+            message = "Moved to `toExternalResource()`",
+            replaceWith = ReplaceWith("resource.toAutoCloseable()"),
+        )
+        @DeprecatedSinceMirai(errorSince = "2.8", hiddenSince = "2.10")
+        public fun createAutoCloseable(resource: ExternalResource): ExternalResource {
+            return resource.toAutoCloseable()
         }
-
-        // endregion
 
         ///////////////////////////////////////////////////////////////////////////
         // region sendAsImageTo
@@ -344,7 +367,7 @@ public interface ExternalResource : Closeable {
          * @see RemoteFile.path
          * @see RemoteFile.upload
          */
-        @Suppress("DEPRECATION")
+        @Suppress("DEPRECATION", "DEPRECATION_ERROR")
         @JvmStatic
         @JvmBlockingBridge
         @JvmOverloads
@@ -354,13 +377,16 @@ public interface ExternalResource : Closeable {
                 "this.sendTo(contact, path, callback)",
                 "net.mamoe.mirai.utils.ExternalResource.Companion.sendTo"
             ),
-            level = DeprecationLevel.WARNING
+            level = DeprecationLevel.ERROR
         ) // deprecated since 2.7-M1
+        @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10")
         public suspend fun File.uploadTo(
             contact: FileSupported,
             path: String,
             callback: RemoteFile.ProgressionCallback? = null,
-        ): FileMessage = toExternalResource().use { contact.uploadFile(path, it, callback) }
+        ): FileMessage = toExternalResource().use {
+            contact.filesRoot.resolve(path).upload(it, callback)
+        }
 
         /**
          * 上传文件并获取文件消息.
@@ -377,7 +403,7 @@ public interface ExternalResource : Closeable {
          * @see RemoteFile.path
          * @see RemoteFile.upload
          */
-        @Suppress("DEPRECATION")
+        @Suppress("DEPRECATION", "DEPRECATION_ERROR")
         @JvmStatic
         @JvmBlockingBridge
         @JvmName("uploadAsFile")
@@ -388,13 +414,16 @@ public interface ExternalResource : Closeable {
                 "this.sendAsFileTo(contact, path, callback)",
                 "net.mamoe.mirai.utils.ExternalResource.Companion.sendAsFileTo"
             ),
-            level = DeprecationLevel.WARNING
+            level = DeprecationLevel.ERROR
         ) // deprecated since 2.7-M1
+        @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10")
         public suspend fun ExternalResource.uploadAsFile(
             contact: FileSupported,
             path: String,
             callback: RemoteFile.ProgressionCallback? = null,
-        ): FileMessage = contact.uploadFile(path, this, callback)
+        ): FileMessage {
+            return contact.filesRoot.resolve(path).upload(this, callback)
+        }
 
         // endregion
 
@@ -412,14 +441,22 @@ public interface ExternalResource : Closeable {
          * @see RemoteFile.path
          * @see RemoteFile.uploadAndSend
          */
+        @Suppress("DEPRECATION_ERROR", "DEPRECATION")
+        @Deprecated(
+            "Deprecated. Please use AbsoluteFolder.uploadNewFile",
+            ReplaceWith("contact.files.uploadNewFile(path, this, callback)")
+        ) // deprecated since 2.8.0-RC
         @JvmStatic
         @JvmBlockingBridge
         @JvmOverloads
+        @DeprecatedSinceMirai(warningSince = "2.8")
         public suspend fun <C : FileSupported> File.sendTo(
             contact: C,
             path: String,
             callback: RemoteFile.ProgressionCallback? = null,
-        ): MessageReceipt<C> = toExternalResource().use { contact.sendFile(path, it, callback) }
+        ): MessageReceipt<C> = toExternalResource().use {
+            contact.filesRoot.resolve(path).upload(it, callback).sendTo(contact)
+        }
 
         /**
          * 上传文件并发送件消息.  如果要上传的文件格式是图片或者语音, 也会将它们作为文件上传而不会调整消息类型.
@@ -431,15 +468,23 @@ public interface ExternalResource : Closeable {
          * @see RemoteFile.path
          * @see RemoteFile.uploadAndSend
          */
+        @Suppress("DEPRECATION", "DEPRECATION_ERROR")
+        @Deprecated(
+            "Deprecated. Please use AbsoluteFolder.uploadNewFile",
+            ReplaceWith("contact.files.uploadNewFile(path, this, callback)")
+        ) // deprecated since 2.8.0-RC
         @JvmStatic
         @JvmBlockingBridge
         @JvmName("sendAsFile")
         @JvmOverloads
+        @DeprecatedSinceMirai(warningSince = "2.8")
         public suspend fun <C : FileSupported> ExternalResource.sendAsFileTo(
             contact: C,
             path: String,
             callback: RemoteFile.ProgressionCallback? = null,
-        ): MessageReceipt<C> = contact.sendFile(path, this, callback)
+        ): MessageReceipt<C> {
+            return contact.filesRoot.resolve(path).upload(this, callback).sendTo(contact)
+        }
 
         // endregion
 
@@ -447,16 +492,284 @@ public interface ExternalResource : Closeable {
         // region uploadAsVoice
         ///////////////////////////////////////////////////////////////////////////
 
-        @Suppress("DEPRECATION")
+        @Suppress("DEPRECATION", "DEPRECATION_ERROR")
         @JvmBlockingBridge
         @JvmStatic
-        @Deprecated("Use `contact.uploadAudio(resource)` instead", level = DeprecationLevel.WARNING)
+        @Deprecated(
+            "Use `contact.uploadAudio(resource)` instead",
+            level = DeprecationLevel.ERROR
+        ) // deprecated since 2.7
+        @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10")
         public suspend fun ExternalResource.uploadAsVoice(contact: Contact): net.mamoe.mirai.message.data.Voice {
             @Suppress("DEPRECATION")
             if (contact is Group) return contact.uploadVoice(this)
             else throw UnsupportedOperationException("Contact `$contact` is not supported uploading voice")
         }
         // endregion
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
+    // region Java Friendly Functions
+    ///////////////////////////////////////////////////////////////////////////
+
+    /**
+     * 创建一个在 _使用一次_ 后就会自动 [close] 的 [ExternalResource].
+     *
+     * @since 2.8.0
+     */
+    public fun toAutoCloseable(): ExternalResource {
+        return if (isAutoClose) this else {
+            val delegate = this
+            object : ExternalResource by delegate {
+                override val isAutoClose: Boolean get() = true
+                override fun toString(): String = "ExternalResourceWithAutoClose(delegate=$delegate)"
+                override fun toAutoCloseable(): ExternalResource {
+                    return this
+                }
+            }
+        }
+    }
+
+    ///////////////////////////////////////////////////////////////////////////
+    // endregion
+    ///////////////////////////////////////////////////////////////////////////
+
+}
+
+/**
+ * 一个实现了基本方法的外部资源
+ *
+ * ## 实现
+ *
+ * [AbstractExternalResource] 实现了大部分必要的方法,
+ * 只有 [ExternalResource.inputStream], [ExternalResource.size] 还未实现
+ *
+ * 其中 [ExternalResource.inputStream] 要求每次读取的内容都是一致的
+ *
+ * Example:
+ * ```
+ * class MyCustomExternalResource: AbstractExternalResource() {
+ *      override fun inputStream0(): InputStream = FileInputStream("/test.txt")
+ *      override val size: Long get() = File("/test.txt").length()
+ * }
+ * ```
+ *
+ * ## 资源释放
+ *
+ * 如同 mirai 内置的 [ExternalResource] 实现一样,
+ * [AbstractExternalResource] 也会被注册进入资源泄露监视器
+ * (即意味着 [AbstractExternalResource] 也要求手动关闭)
+ *
+ * 为了确保逻辑正确性, [AbstractExternalResource] 不允许覆盖其 [close] 方法,
+ * 必须在构造 [AbstractExternalResource] 的时候给定一个 [ResourceCleanCallback] 以进行资源释放
+ *
+ * 对于 [ResourceCleanCallback], 有以下要求
+ *
+ * - 没有对 [AbstractExternalResource] 的访问 (即没有 [AbstractExternalResource] 的任何引用)
+ *
+ * Example:
+ * ```
+ * class MyRes(
+ *      cleanup: ResourceCleanCallback,
+ *      val delegate: Closable,
+ * ): AbstractExternalResource(cleanup) {
+ * }
+ *
+ * // 错误, 该写法会导致 Resource 永远也不会被自动释放
+ * lateinit var myRes: MyRes
+ * val cleanup = ResourceCleanCallback {
+ *      myRes.delegate.close()
+ * }
+ * myRes = MyRes(cleanup, fetchDelegate())
+ *
+ * // 正确
+ * val delegate: Closable
+ * val cleanup = ResourceCleanCallback {
+ *      delegate.close()
+ * }
+ * val myRes = MyRes(cleanup, delegate)
+ * ```
+ *
+ * @since 2.9
+ *
+ * @see ExternalResource
+ * @see AbstractExternalResource.setResourceCleanCallback
+ * @see AbstractExternalResource.registerToLeakObserver
+ */
+@Suppress("MemberVisibilityCanBePrivate")
+public abstract class AbstractExternalResource
+@JvmOverloads
+public constructor(
+    displayName: String? = null,
+    cleanup: ResourceCleanCallback? = null,
+) : ExternalResource {
+
+    public constructor(
+        cleanup: ResourceCleanCallback? = null,
+    ) : this(null, cleanup)
+
+    public fun interface ResourceCleanCallback {
+        @Throws(IOException::class)
+        public fun cleanup()
+    }
+
+    override val md5: ByteArray by lazy { inputStream().md5() }
+    override val sha1: ByteArray by lazy { inputStream().sha1() }
+    override val formatName: String by lazy {
+        inputStream().detectFileTypeAndClose() ?: ExternalResource.DEFAULT_FORMAT_NAME
+    }
+
+    private val leakObserverRegistered = atomic(false)
+
+    /**
+     * 注册 [ExternalResource] 资源泄露监视器
+     *
+     * 受限于类继承构造器调用顺序, [AbstractExternalResource] 无法做到在完成初始化后马上注册监视器
+     *
+     * 该方法以允许 实现类 在完成初始化后直接注册资源监视器以避免意外的资源泄露
+     *
+     * 在不调用本方法的前提下, 如果没有相关的资源访问操作, `this` 可能会被意外泄露
+     *
+     * 正确示例:
+     * ```
+     * // Kotlin
+     * public class MyResource: AbstractExternalResource() {
+     *      init {
+     *          val res: SomeResource
+     *          // 一些资源初始化
+     *          registerToLeakObserver()
+     *          setResourceCleanCallback(Releaser(res))
+     *      }
+     *
+     *      private class Releaser(
+     *          private val res: SomeResource,
+     *      ) : AbstractExternalResource.ResourceCleanCallback {
+     *          override fun cleanup() = res.close()
+     *      }
+     * }
+     *
+     * // Java
+     * public class MyResource extends AbstractExternalResource {
+     *      public MyResource() throws IOException {
+     *          SomeResource res;
+     *          // 一些资源初始化
+     *          registerToLeakObserver();
+     *          setResourceCleanCallback(new Releaser(res));
+     *      }
+     *
+     *      private static class Releaser implements ResourceCleanCallback {
+     *          private final SomeResource res;
+     *          Releaser(SomeResource res) { this.res = res; }
+     *
+     *          public void cleanup() throws IOException { res.close(); }
+     *      }
+     * }
+     * ```
+     *
+     * @see setResourceCleanCallback
+     */
+    protected fun registerToLeakObserver() {
+        // 用户自定义 AbstractExternalResource 也许会在 <init> 的时候失败
+        // 于是在第一次使用 ExternalResource 相关的函数的时候注册 LeakObserver
+        if (leakObserverRegistered.compareAndSet(expect = false, update = true)) {
+            ExternalResourceLeakObserver.register(this, holder)
+        }
+    }
+
+    /**
+     * 该方法用于告知 [AbstractExternalResource] 不需要注册资源泄露监视器。
+     * **仅在我知道我在干什么的前提下调用此方法**
+     *
+     * 不建议取消注册监视器, 这可能带来意外的错误
+     *
+     * @see registerToLeakObserver
+     */
+    protected fun dontRegisterLeakObserver() {
+        leakObserverRegistered.value = true
+    }
+
+    final override fun inputStream(): InputStream {
+        registerToLeakObserver()
+        return inputStream0()
+    }
+
+    protected abstract fun inputStream0(): InputStream
+
+    /**
+     * 修改 `this` 的资源释放回调。
+     * **仅在我知道我在干什么的前提下调用此方法**
+     *
+     * ```
+     * class MyRes {
+     * // region kotlin
+     *
+     *      private inner class Releaser : ResourceCleanCallback
+     *
+     *      private class NotInnerReleaser : ResourceCleanCallback
+     *
+     *      init {
+     *          // 错误, 内部类, Releaser 存在对 MyRes 的引用
+     *          setResourceCleanCallback(Releaser())
+     *          // 错误, 匿名对象, 可能存在对 MyRes 的引用, 取决于编译器
+     *          setResourceCleanCallback(object : ResourceCleanCallback {})
+     *          // 正确, 无 inner 修饰, 等同于 java 的 private static class
+     *          setResourceCleanCallback(NotInnerReleaser(directResource))
+     *      }
+     *
+     * // endregion kotlin
+     *
+     * // region java
+     *
+     *      private class Releaser implements ResourceCleanCallback {}
+     *      private static class StaticReleaser implements ResourceCleanCallback {}
+     *
+     *      MyRes() {
+     *          // 错误, 内部类, 存在对 MyRes 的引用
+     *          setResourceCleanCallback(new Releaser());
+     *          // 错误, 匿名对象, 可能存在对 MyRes 的引用, 取决于 javac
+     *          setResourceCleanCallback(new ResourceCleanCallback() {});
+     *          // 正确
+     *          setResourceCleanCallback(new StaticReleaser(directResource));
+     *      }
+     *
+     * // endregion java
+     * }
+     * ```
+     *
+     * @see registerToLeakObserver
+     */
+    protected fun setResourceCleanCallback(cleanup: ResourceCleanCallback?) {
+        holder.cleanup = cleanup
+    }
+
+    private class UsrCustomResHolder(
+        @JvmField var cleanup: ResourceCleanCallback?,
+        private val resourceName: String,
+    ) : ExternalResourceHolder() {
+
+        override val closed: Deferred<Unit> = CompletableDeferred()
+
+        override fun closeImpl() {
+            cleanup?.cleanup()
+        }
+
+        // display on logger of ExternalResourceLeakObserver
+        override fun toString(): String = resourceName
+    }
+
+    private val holder = UsrCustomResHolder(cleanup, displayName ?: buildString {
+        append("ExternalResourceHolder<")
+        append(this@AbstractExternalResource.javaClass.name)
+        append('@')
+        append(System.identityHashCode(this@AbstractExternalResource))
+        append('>')
+    })
+
+    final override val closed: Deferred<Unit> get() = holder.closed.also { registerToLeakObserver() }
+
+    @Throws(IOException::class)
+    final override fun close() {
+        holder.close()
     }
 }
 

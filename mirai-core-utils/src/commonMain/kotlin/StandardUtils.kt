@@ -21,6 +21,14 @@ public inline fun <reified T> Any?.cast(): T {
     return this as T
 }
 
+/**
+ * Casts T to U where U : T. Safer than [cast] -- [castUp] only allow casting to upper types.
+ */
+public inline fun <reified U : T, T> T.castUp(): U {
+    contract { returns() implies (this@castUp is U) }
+    return this as U
+}
+
 public inline fun <reified T> Any?.safeCast(): T? {
     contract { returnsNotNull() implies (this@safeCast is T) }
     return this as? T
@@ -50,6 +58,33 @@ public inline fun <E> MutableList<E>.replaceAllKotlin(operator: (E) -> E) {
     }
 }
 
+public fun <T> Collection<T>.asImmutable(): Collection<T> {
+    return when (this) {
+        is List<T> -> asImmutable()
+        is Set<T> -> asImmutable()
+        else -> Collections.unmodifiableCollection(this)
+    }
+}
+
+@Suppress("NOTHING_TO_INLINE")
+public inline fun <T> Collection<T>.asImmutableStrict(): Collection<T> {
+    return Collections.unmodifiableCollection(this)
+}
+
+@Suppress("NOTHING_TO_INLINE")
+public inline fun <T> List<T>.asImmutable(): List<T> {
+    return Collections.unmodifiableList(this)
+}
+
+@Suppress("NOTHING_TO_INLINE")
+public inline fun <T> Set<T>.asImmutable(): Set<T> {
+    return Collections.unmodifiableSet(this)
+}
+
+@Suppress("NOTHING_TO_INLINE")
+public inline fun <K, V> Map<K, V>.asImmutable(): Map<K, V> {
+    return Collections.unmodifiableMap(this)
+}
 
 public fun Throwable.getRootCause(maxDepth: Int = 20): Throwable {
     var depth = 0

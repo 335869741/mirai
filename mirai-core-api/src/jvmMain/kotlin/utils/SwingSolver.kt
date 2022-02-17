@@ -132,6 +132,8 @@ internal object WindowHelperJvm {
         CLI
     }
 
+    private val logger = MiraiLogger.Factory.create(this::class)
+
     internal val platformKind: PlatformKind = kotlin.run {
         if (kotlin.runCatching { Class.forName("android.util.Log") }.isSuccess) {
             // Android platform
@@ -144,12 +146,12 @@ internal object WindowHelperJvm {
             Toolkit.getDefaultToolkit()
 
             if (Desktop.isDesktopSupported()) {
-                MiraiLogger.TopLevel.info(
+                logger.info(
                     """
                                     Mirai 正在使用桌面环境. 如遇到验证码将会弹出对话框. 可添加 JVM 属性 `mirai.no-desktop` 以关闭.
                                 """.trimIndent()
                 )
-                MiraiLogger.TopLevel.info(
+                logger.info(
                     """
                                     Mirai is using desktop. Captcha will be thrown by window popup. You can add `mirai.no-desktop` to JVM properties (-Dmirai.no-desktop) to disable it.
                                 """.trimIndent()

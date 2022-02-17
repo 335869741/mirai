@@ -20,6 +20,7 @@ import net.mamoe.mirai.contact.MemberPermission.*
 import net.mamoe.mirai.event.events.*
 import net.mamoe.mirai.internal.contact.addNewNormalMember
 import net.mamoe.mirai.internal.contact.info.MemberInfoImpl
+import net.mamoe.mirai.internal.getGroupByCodeOrUin
 import net.mamoe.mirai.internal.getGroupByUin
 import net.mamoe.mirai.internal.getGroupByUinOrCode
 import net.mamoe.mirai.internal.message.contextualBugReportException
@@ -32,9 +33,9 @@ import net.mamoe.mirai.internal.network.protocol.data.proto.MsgComm
 import net.mamoe.mirai.internal.network.protocol.data.proto.OnlinePushTrans
 import net.mamoe.mirai.internal.network.protocol.data.proto.Structmsg
 import net.mamoe.mirai.internal.network.protocol.data.proto.Submsgtype0x44
-import net.mamoe.mirai.internal.utils._miraiContentToString
 import net.mamoe.mirai.internal.utils.io.serialization.loadAs
 import net.mamoe.mirai.internal.utils.parseToMessageDataList
+import net.mamoe.mirai.internal.utils.structureToString
 import net.mamoe.mirai.internal.utils.toMemberInfo
 import net.mamoe.mirai.utils.MiraiLogger
 import net.mamoe.mirai.utils.context
@@ -136,10 +137,14 @@ internal class GroupOrMemberListNoticeProcessor(
     // 33
     private suspend fun NoticePipelineContext.processGroupJoin33(data: MsgComm.Msg) = data.context {
         msgBody.msgContent.read {
-            val groupUin = Mirai.calculateGroupUinByGroupCode(readUInt().toLong())
-            val group = bot.getGroupByUin(groupUin) ?: bot.addNewGroupByUin(groupUin) ?: return
+            val groupCode = readUInt().toLong()
+            if (remaining < 5) return
             discardExact(1)
             val joinedMemberUin = readUInt().toLong()
+
+            if (joinedMemberUin == bot.id && bot.getGroupByCodeOrUin(groupCode) != null) return // duplicate
+
+            val group = bot.getGroupByCodeOrUin(groupCode) ?: bot.addNewGroupByCode(groupCode) ?: return
             val joinType = readByte().toInt()
             val invitorUin = readUInt().toLong()
             when (joinType) {
@@ -207,7 +212,7 @@ internal class GroupOrMemberListNoticeProcessor(
                 } else {
                     throw contextualBugReportException(
                         "解析 NewContact.SystemMsgNewGroup, subType=5, groupMsgType=$groupMsgType",
-                        data._miraiContentToString(),
+                        data.structureToString(),
                         null,
                         "并描述此时机器人是否被邀请加入群等其他",
                     )
@@ -239,7 +244,7 @@ internal class GroupOrMemberListNoticeProcessor(
                 }
                 else -> throw contextualBugReportException(
                     "parse SystemMsgNewGroup, subType=1",
-                    this._miraiContentToString(),
+                    this.structureToString(),
                     additional = "并尽量描述此时机器人是否正被邀请加入群, 或者是有有新群员加入此群"
                 )
             }
@@ -282,7 +287,7 @@ internal class GroupOrMemberListNoticeProcessor(
                     else -> {
                         throw contextualBugReportException(
                             "解析 NewContact.SystemMsgNewGroup, subType=5, groupMsgType=$groupMsgType",
-                            this._miraiContentToString(),
+                            this.structureToString(),
                             null,
                             "并描述此时机器人是否被踢出群等",
                         )
@@ -361,6 +366,12 @@ internal class GroupOrMemberListNoticeProcessor(
         groupUin: Long,
     ) {
         when (kind) {
+            // 01 为bot为群主时解散群
+            1, 0x81 -> bot.getGroupByUinOrCode(groupUin)?.let { group ->
+                collect(BotLeaveEvent.Disband(group))
+                bot.groups.delegate.remove(group)
+                group.cancel(CancellationException("Being Disband"))
+            }
             2, 0x82 -> bot.getGroupByUinOrCode(groupUin)?.let { group ->
                 if (target == bot.id) {
                     collect(BotLeaveEvent.Active(group))

@@ -52,6 +52,9 @@ internal object MessageSvcPbSendMsg : OutgoingPacketFactory<MessageSvcPbSendMsg.
         object MessageTooLarge : Response() {
             override fun toString(): String = "MessageSvcPbSendMsg.Response.MessageTooLarge"
         }
+        object ServiceUnavailable : Response() {
+            override fun toString(): String = "MessageSvcPbSendMsg.Response.ServiceUnavailable"
+        }
 
         /**
          * 121: 被限制? 个别号才不能发
@@ -159,7 +162,7 @@ internal object MessageSvcPbSendMsg : OutgoingPacketFactory<MessageSvcPbSendMsg.
             fileType = 4,
             pbReserve = byteArrayOf(0),
             format = let {
-                @Suppress("DEPRECATION")
+                @Suppress("DEPRECATION_ERROR")
                 if (it is Voice) {
                     it._codec
                 } else {
@@ -463,6 +466,7 @@ internal object MessageSvcPbSendMsg : OutgoingPacketFactory<MessageSvcPbSendMsg.
         return when (response.result) {
             0 -> Response.SUCCESS
             10 -> Response.MessageTooLarge
+            32 -> Response.ServiceUnavailable
             else -> Response.Failed(
                 response.result,
                 response.errtype,

@@ -11,7 +11,7 @@
 
 package net.mamoe.mirai.contact
 
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.event.events.*
 import net.mamoe.mirai.message.MessageReceipt
@@ -20,6 +20,7 @@ import net.mamoe.mirai.message.action.Nudge
 import net.mamoe.mirai.message.data.Message
 import net.mamoe.mirai.message.data.isContentEmpty
 import net.mamoe.mirai.message.data.toPlainText
+import net.mamoe.mirai.utils.DeprecatedSinceMirai
 import net.mamoe.mirai.utils.NotStableForInheritance
 import kotlin.time.Duration
 import kotlin.time.DurationUnit
@@ -49,13 +50,13 @@ public interface NormalMember : Member {
     public override var nameCard: String
 
     /**
-     * 群头衔.
+     * 群特殊头衔.
      *
-     * 仅群主可以修改群头衔.
+     * 仅群主可以修改群特殊头衔.
      *
      * 在修改时将会异步上传至服务器.
      *
-     * @see MemberSpecialTitleChangeEvent 群名片被管理员, 自己或 [Bot] 改动事件. 修改时也会触发此事件.
+     * @see MemberSpecialTitleChangeEvent 群特殊头衔被管理员, 自己或 [Bot] 改动事件. 修改时也会触发此事件.
      * @throws PermissionDeniedException 无权限修改时
      */
     public override var specialTitle: String
@@ -124,7 +125,7 @@ public interface NormalMember : Member {
      * @throws PermissionDeniedException 无权限修改时
      *
      */
-    public suspend fun kick(message: String)
+    public suspend fun kick(message: String): Unit = kick(message, false)
 
 
     /**

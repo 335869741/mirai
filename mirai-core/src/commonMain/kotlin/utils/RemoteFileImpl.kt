@@ -1,11 +1,13 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
  *
  * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
+
+@file:Suppress("DEPRECATION", "OverridingDeprecatedMember")
 
 package net.mamoe.mirai.internal.utils
 
@@ -17,6 +19,7 @@ import net.mamoe.mirai.contact.isOperator
 import net.mamoe.mirai.internal.asQQAndroidBot
 import net.mamoe.mirai.internal.contact.groupCode
 import net.mamoe.mirai.internal.message.FileMessageImpl
+import net.mamoe.mirai.internal.message.MiraiInternalMessageFlag
 import net.mamoe.mirai.internal.network.highway.Highway
 import net.mamoe.mirai.internal.network.highway.ResourceKind
 import net.mamoe.mirai.internal.network.protocol
@@ -27,7 +30,6 @@ import net.mamoe.mirai.internal.network.protocol.packet.sendAndExpect
 import net.mamoe.mirai.internal.utils.io.serialization.toByteArray
 import net.mamoe.mirai.message.MessageReceipt
 import net.mamoe.mirai.message.data.FileMessage
-import net.mamoe.mirai.message.data.sendTo
 import net.mamoe.mirai.utils.*
 import net.mamoe.mirai.utils.ExternalResource.Companion.toExternalResource
 import net.mamoe.mirai.utils.RemoteFile.Companion.ROOT_PATH
@@ -44,6 +46,10 @@ internal object FileSystem {
         if (char != null) {
             throw IllegalArgumentException("""Chars ':*?"<>|' are not allowed in path. RemoteFile path contains illegal char: '$char'. path='$path'""")
         }
+    }
+
+    fun isLegal(path: String): Boolean {
+        return path.firstOrNull { it in """:*?"<>|""" } == null
     }
 
     fun normalize(path: String): String {
@@ -522,26 +528,38 @@ internal class RemoteFileImpl(
         return resp
     }
 
+    private suspend fun uploadInternal(
+        resource: ExternalResource,
+        callback: RemoteFile.ProgressionCallback?,
+    ): FileMessage {
+        val resp = upload0(resource, callback) ?: error("Failed to upload file.")
+        return FileMessageImpl(
+            resp.fileId, resp.busId, name, resource.size, allowSend = true
+        )
+    }
+
     override suspend fun upload(
         resource: ExternalResource,
         callback: RemoteFile.ProgressionCallback?,
     ): FileMessage {
-        val resp = upload0(resource, null) ?: error("Failed to upload file.")
-        return FileMessageImpl(
-            resp.fileId, resp.busId, name, resource.size
-        )
+        val msg = uploadInternal(resource, callback)
+        contact.sendMessage(msg + MiraiInternalMessageFlag)
+        return msg
     }
 
     // compiler bug
+    @Suppress("DEPRECATION_ERROR")
     override suspend fun upload(resource: ExternalResource): FileMessage {
         return upload(resource, null)
     }
 
     // compiler bug
+    @Suppress("DEPRECATION_ERROR")
     override suspend fun upload(file: File, callback: RemoteFile.ProgressionCallback?): FileMessage =
         file.toExternalResource().use { upload(it, callback) }
 
     //compiler bug
+    @Suppress("DEPRECATION_ERROR")
     override suspend fun upload(file: File): FileMessage {
         // Dear compiler:
         //
@@ -554,7 +572,7 @@ internal class RemoteFileImpl(
 
     override suspend fun uploadAndSend(resource: ExternalResource): MessageReceipt<Contact> {
         @Suppress("DEPRECATION")
-        return upload(resource).sendTo(contact)
+        return contact.sendMessage(uploadInternal(resource, null) + MiraiInternalMessageFlag)
     }
 
     // compiler bug

@@ -16,9 +16,10 @@ package net.mamoe.mirai.message.data
 import kotlinx.serialization.KSerializer
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Mirai
 import net.mamoe.mirai.contact.FileSupported
+import net.mamoe.mirai.contact.file.AbsoluteFile
 import net.mamoe.mirai.event.events.MessageEvent
 import net.mamoe.mirai.message.code.CodableMessage
 import net.mamoe.mirai.message.code.internal.appendStringAsMiraiCode
@@ -29,10 +30,12 @@ import net.mamoe.mirai.utils.*
  *
  * [name] 与 [size] 只供本地使用, 发送消息时只会使用 [id] 和 [internalId].
  *
- * ### 文件操作
- * 要下载这个文件, 可通过 [toRemoteFile] 获取到 [RemoteFile] 然后操作.
+ * 注: [FileMessage] 不可二次发送
  *
- * 要获取到 [FileMessage], 可以通过 [MessageEvent.message] 获取, 或通过 [RemoteFile.upload] 上传.
+ * ### 文件操作
+ * 要下载这个文件, 可通过 [toAbsoluteFile] 获取到 [AbsoluteFile] 然后操作.
+ *
+ * 要获取到 [FileMessage], 可以通过 [MessageEvent.message] 获取, 或通过 [AbsoluteFile.toMessage] 得到.
  *
  * @since 2.5
  * @suppress [FileMessage] 的使用是稳定的, 但自行实现不稳定.
@@ -40,6 +43,7 @@ import net.mamoe.mirai.utils.*
 @Serializable(FileMessage.Serializer::class)
 @SerialName(FileMessage.SERIAL_NAME)
 @NotStableForInheritance
+@JvmBlockingBridge
 public interface FileMessage : MessageContent, ConstrainSingle, CodableMessage {
     /**
      * 服务器需要的某种 ID.
@@ -74,10 +78,20 @@ public interface FileMessage : MessageContent, ConstrainSingle, CodableMessage {
     /**
      * 获取一个对应的 [RemoteFile]. 当目标群或好友不存在这个文件时返回 `null`.
      */
-    @JvmBlockingBridge
+    @Suppress("DEPRECATION")
+    @Deprecated("Please use toAbsoluteFile", ReplaceWith("this.toAbsoluteFile(contact)")) // deprecated since 2.8.0-RC
+    @DeprecatedSinceMirai(warningSince = "2.8")
     public suspend fun toRemoteFile(contact: FileSupported): RemoteFile? {
+        @Suppress("DEPRECATION")
         return contact.filesRoot.resolveById(id)
     }
+
+    /**
+     * 获取一个对应的 [RemoteFile]. 当目标群或好友不存在这个文件时返回 `null`.
+     *
+     * @since 2.8
+     */
+    public suspend fun toAbsoluteFile(contact: FileSupported): AbsoluteFile?
 
     override val key: Key get() = Key
 

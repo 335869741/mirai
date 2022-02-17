@@ -22,9 +22,9 @@ import net.mamoe.mirai.internal.network.protocol.packet.*
 import net.mamoe.mirai.internal.network.protocol.packet.login.wtlogin.WtLoginExt
 import net.mamoe.mirai.internal.network.protocol.packet.login.wtlogin.analysisTlv0x531
 import net.mamoe.mirai.internal.network.protocol.packet.login.wtlogin.orEmpty
-import net.mamoe.mirai.internal.utils._miraiContentToString
 import net.mamoe.mirai.internal.utils.crypto.TEA
-import net.mamoe.mirai.internal.utils.soutv
+import net.mamoe.mirai.internal.utils.printStructure
+import net.mamoe.mirai.internal.utils.structureToString
 import net.mamoe.mirai.utils.*
 
 internal class WtLogin {
@@ -163,7 +163,7 @@ internal class WtLogin {
             val tlvMap: TlvMap = this._readTLVMap()
 
             if (SHOW_TLV_MAP_ON_LOGIN_SUCCESS) {
-                tlvMap.smartToString().soutv("tlvMap outer")
+                tlvMap.smartToString().printStructure("tlvMap outer")
             }
 
             // tlvMap.printTLVMap()
@@ -185,7 +185,7 @@ internal class WtLogin {
                 // 1, 15 -> onErrorMessage(tlvMap) ?: error("Cannot find error message")
                 else -> {
                     onErrorMessage(type.toInt(), tlvMap, bot)
-                        ?: error("Cannot find error message, unknown login result type: $type, TLVMap = ${tlvMap._miraiContentToString()}")
+                        ?: error("Cannot find error message, unknown login result type: $type, TLVMap = ${tlvMap.structureToString()}")
                 }
             }
         }
@@ -205,7 +205,7 @@ internal class WtLogin {
         }
 
         private fun onUnsafeDeviceLogin(tlvMap: TlvMap, bot: QQAndroidBot): LoginPacketResponse.UnsafeLogin {
-            return LoginPacketResponse.UnsafeLogin(bot, tlvMap.getOrFail(0x204).encodeToString())
+            return LoginPacketResponse.UnsafeLogin(bot, tlvMap.getOrFail(0x204).decodeToString())
         }
 
         private fun onSolveLoginCaptcha(tlvMap: TlvMap, bot: QQAndroidBot): LoginPacketResponse.Captcha {
@@ -222,7 +222,7 @@ internal class WtLogin {
             // val ret = tlvMap[0x104]?.let { println(it.toUHexString()) }
             bot.client.t104 = tlvMap.getOrFail(0x104)
             tlvMap[0x192]?.let {
-                return LoginPacketResponse.Captcha.Slider(bot, it.encodeToString())
+                return LoginPacketResponse.Captcha.Slider(bot, it.decodeToString())
             }
             tlvMap[0x165]?.let {
                 // if (question[18].toInt() == 0x36) {
@@ -242,7 +242,7 @@ internal class WtLogin {
                 // } else error("UNKNOWN CAPTCHA QUESTION: ${question.toUHexString()}, tlvMap=" + tlvMap.contentToString())
             }
 
-            error("UNKNOWN CAPTCHA, tlvMap=" + tlvMap._miraiContentToString())
+            error("UNKNOWN CAPTCHA, tlvMap=" + tlvMap.structureToString())
         }
 
         fun onLoginSuccess(subCommand: Int, tlvMap: TlvMap, bot: QQAndroidBot): LoginPacketResponse.Success {
@@ -266,7 +266,7 @@ internal class WtLogin {
                     val tlvMap119 = this._readTLVMap()
 
                     if (SHOW_TLV_MAP_ON_LOGIN_SUCCESS) {
-                        tlvMap119.smartToString().soutv("TlvMap119")
+                        tlvMap119.smartToString().printStructure("TlvMap119")
                     }
 
                     tlvMap119[0x106]?.let { client.analyzeTlv106(it) }
@@ -275,7 +275,7 @@ internal class WtLogin {
                     tlvMap119[0x1c]?.read {
                         val bytes = readBytes()
                         bot.network.logger.debug("onLoginSuccess, tlvMap119[0x1c]: " + bytes.toUHexString())
-                        bot.network.logger.debug("onLoginSuccess, tlvMap119[0x1c]: " + bytes.encodeToString())
+                        bot.network.logger.debug("onLoginSuccess, tlvMap119[0x1c]: " + bytes.decodeToString())
                     }
 
                     tlvMap119[0x130]?.let { client.analysisTlv130(it) }
@@ -366,7 +366,7 @@ internal class WtLogin {
                     } ?: emptyMap()
 
                     if (SHOW_TLV_MAP_ON_LOGIN_SUCCESS) {
-                        changeTokenTimeMap._miraiContentToString().soutv("tokenChangeTime")
+                        changeTokenTimeMap.structureToString().printStructure("tokenChangeTime")
                     }
 
                     val outPSKeyMap: PSKeyMap?

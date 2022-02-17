@@ -16,7 +16,7 @@
 
 package net.mamoe.mirai.event.events
 
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.Mirai
 import net.mamoe.mirai.contact.*
@@ -55,6 +55,18 @@ public sealed class BotLeaveEvent : BotEvent, Packet, AbstractEvent(), GroupMemb
         public override val group: Group get() = operator.group
         public override val bot: Bot get() = super<BotLeaveEvent>.bot
         public override fun toString(): String = "BotLeaveEvent.Kick(group=${group.id},operator=${operator.id})"
+    }
+
+    /**
+     * 机器人因群主解散群而退出群. 操作人一定是群主
+     * @since 2.8
+     */
+    @MiraiExperimentalApi("BotLeaveEvent 的子类可能在将来改动. 使用 BotLeaveEvent 以保证兼容性.")
+    public data class Disband @MiraiInternalApi constructor(
+        public override val group: Group
+    ) : BotLeaveEvent(), GroupOperableEvent {
+        public override val operator: NormalMember = group.owner
+        public override fun toString(): String = "BotLeaveEvent.Disband(group=${group.id})"
     }
 
     public override val bot: Bot get() = group.bot
@@ -480,7 +492,9 @@ public data class MemberCardChangeEvent @MiraiInternalApi constructor(
 ) : GroupMemberEvent, Packet, AbstractEvent(), GroupMemberInfoChangeEvent
 
 /**
- * 成员群头衔改动. 一定为群主操作
+ * 成员群特殊头衔改动. 一定为群主操作
+ *
+ * 由于服务器并不会告知特殊头衔的重置, 因此此事件在特殊头衔重置后只能由 mirai 在发现变动时才广播
  */
 public data class MemberSpecialTitleChangeEvent @MiraiInternalApi constructor(
     /**
@@ -501,7 +515,7 @@ public data class MemberSpecialTitleChangeEvent @MiraiInternalApi constructor(
      * 为 null 时则是机器人操作.
      */
     public override val operator: NormalMember?
-) : GroupMemberEvent, GroupOperableEvent, AbstractEvent(), GroupMemberInfoChangeEvent
+) : GroupMemberEvent, GroupOperableEvent, AbstractEvent(), Packet, GroupMemberInfoChangeEvent
 
 // endregion
 

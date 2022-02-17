@@ -25,7 +25,6 @@ import net.mamoe.mirai.internal.utils.toIpV4AddressString
 import net.mamoe.mirai.message.data.AudioCodec
 import net.mamoe.mirai.utils.EMPTY_BYTE_ARRAY
 import net.mamoe.mirai.utils.ExternalResource
-import net.mamoe.mirai.utils.encodeToString
 import net.mamoe.mirai.utils.toUHexString
 
 internal inline val ExternalResource.voiceCodec: Int get() = audioCodec.id
@@ -118,7 +117,7 @@ internal class PttStore {
             val resp =
                 resp0.msgTryupPttRsp.firstOrNull() ?: error("cannot find `msgTryupPttRsp` from `Cmd0x388.RspBody`")
             if (resp.failMsg != null) {
-                throw IllegalStateException(resp.failMsg.encodeToString())
+                throw IllegalStateException(resp.failMsg.decodeToString())
             }
             return Response.RequireUpload(
                 fileId = resp.fileid,
@@ -143,7 +142,7 @@ internal class PttStore {
                 val uint32DownPort: List<Int>
             ) : GroupPttDown.Response() {
                 override fun toString(): String {
-                    return "GroupPttDown(downPara=${downPara.encodeToString()},strDomain=$strDomain})"
+                    return "GroupPttDown(downPara=${downPara.decodeToString()},strDomain=$strDomain})"
                 }
             }
 
@@ -183,7 +182,7 @@ internal class PttStore {
             val resp =
                 resp0.msgGetpttUrlRsp.firstOrNull() ?: error("cannot find `msgGetpttUrlRsp` from `Cmd0x388.RspBody`")
             if (!resp.failMsg.contentEquals(EMPTY_BYTE_ARRAY)) {
-                throw IllegalStateException(resp.failMsg.encodeToString())
+                throw IllegalStateException(resp.failMsg.decodeToString())
             }
             return Response.DownLoadInfo(
                 downDomain = resp.downDomain,
@@ -192,6 +191,50 @@ internal class PttStore {
                 uint32DownPort = resp.uint32DownPort,
                 strDomain = resp.strDomain
             )
+        }
+    }
+
+    object C2CPttDown : OutgoingPacketFactory<C2CPttDown.Response>(
+        "PttCenterSvr.pb_pttCenter_CMD_REQ_APPLY_DOWNLOAD-1200"
+    ) {
+        operator fun invoke(client: QQAndroidClient, uin: Long, uuid: ByteArray) =
+            buildOutgoingUniPacket(client) {
+                writeProtoBuf(
+                    Cmd0x346.ReqBody.serializer(), Cmd0x346.ReqBody(
+                        msgApplyDownloadReq = Cmd0x346.ApplyDownloadReq(
+                            uin = uin,
+                            uuid = uuid,
+                            needHttpsUrl = 1,
+                        ),
+                        clientType = 104,
+                        cmd = 1200,
+                        businessId = 17, // or 3?
+                    )
+                )
+            }
+
+        sealed class Response : Packet {
+            class Failed(val retMsg: String) : Response() {
+                override fun toString(): String {
+                    return "PttCenterSvr.pb_pttCenter#download.Failed(retMsg=$retMsg)"
+                }
+            }
+
+            class Success(val downloadUrl: String) : Response() {
+                override fun toString(): String {
+                    return "PttCenterSvr.pb_pttCenter#download.Success"
+                }
+            }
+        }
+
+        override suspend fun ByteReadPacket.decode(bot: QQAndroidBot): C2CPttDown.Response {
+            val data = readProtoBuf(Cmd0x346.RspBody.serializer())
+            val rsp = data.msgApplyDownloadRsp ?: return Response.Failed("Response not found")
+            if (rsp.retMsg != "success") {
+                return Response.Failed(rsp.retMsg)
+            }
+            val downloadInfo = rsp.msgDownloadInfo ?: return Response.Failed("Download info not found")
+            return Response.Success(downloadInfo.downloadUrl)
         }
     }
 

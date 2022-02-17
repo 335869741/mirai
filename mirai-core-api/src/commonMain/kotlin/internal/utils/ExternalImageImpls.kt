@@ -18,7 +18,7 @@ import java.io.InputStream
 import java.io.RandomAccessFile
 
 
-private fun InputStream.detectFileTypeAndClose(): String? {
+internal fun InputStream.detectFileTypeAndClose(): String? {
     val buffer = ByteArray(COUNT_BYTES_USED_FOR_DETECTING_FILE_TYPE)
     return use {
         kotlin.runCatching { it.read(buffer) }.onFailure { return null }
@@ -39,6 +39,10 @@ internal class ExternalResourceImplByFileWithMd5(
             file.close()
         }
     }
+
+    override var origin: Any? = null
+        internal set
+
 
     override val holder: ResourceHolder = ResourceHolder(file)
 
@@ -97,8 +101,11 @@ internal interface ExternalResourceInternal : ExternalResource {
 internal class ExternalResourceImplByFile(
     private val file: RandomAccessFile,
     formatName: String?,
-    closeOriginalFileOnClose: Boolean = true
+    closeOriginalFileOnClose: Boolean = true,
 ) : ExternalResourceInternal {
+    override var origin: Any? = null
+        internal set
+
     internal class ResourceHolder(
         @JvmField internal val closeOriginalFileOnClose: Boolean,
         @JvmField internal val file: RandomAccessFile,
@@ -146,6 +153,8 @@ internal class ExternalResourceImplByByteArray(
         ?: ExternalResource.DEFAULT_FORMAT_NAME
     }
     override val closed: CompletableDeferred<Unit> = CompletableDeferred()
+    override val origin: Any
+        get() = data//.clone()
 
     override fun inputStream(): InputStream = data.inputStream()
     override fun close() {

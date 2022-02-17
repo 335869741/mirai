@@ -12,6 +12,7 @@ package net.mamoe.mirai.internal.network.notice.group
 import kotlinx.io.core.readUInt
 import kotlinx.io.core.readUShort
 import net.mamoe.mirai.contact.NormalMember
+import net.mamoe.mirai.contact.getMember
 import net.mamoe.mirai.data.GroupHonorType
 import net.mamoe.mirai.event.events.*
 import net.mamoe.mirai.internal.QQAndroidBot
@@ -27,8 +28,9 @@ import net.mamoe.mirai.internal.network.protocol.data.jce.MsgType0x210
 import net.mamoe.mirai.internal.network.protocol.data.proto.Submsgtype0x122
 import net.mamoe.mirai.internal.network.protocol.data.proto.Submsgtype0x27
 import net.mamoe.mirai.internal.network.protocol.data.proto.TroopTips0x857
-import net.mamoe.mirai.internal.utils._miraiContentToString
 import net.mamoe.mirai.internal.utils.io.serialization.loadAs
+import net.mamoe.mirai.internal.utils.parseToMessageDataList
+import net.mamoe.mirai.internal.utils.structureToString
 import net.mamoe.mirai.utils.*
 
 internal class GroupNotificationProcessor(
@@ -61,7 +63,7 @@ internal class GroupNotificationProcessor(
             when (info.field) {
                 1 -> {
                     // 群名
-                    val new = info.value.encodeToString()
+                    val new = info.value.decodeToString()
 
                     val group = bot.getGroup(modGroupProfile.groupCode) ?: continue
                     group.checkIsGroupImpl()
@@ -158,8 +160,8 @@ internal class GroupNotificationProcessor(
         when (data.kind) {
             0x0C -> processMute(data)
             0x0E -> processAllowAnonymousChat(data)
-            0x10 -> processAllowConfessTask(data)
-            0x14 -> processGrayTip(data)
+            0x10 -> processNormalGrayTip(data)
+            0x14 -> processGeneralGrayTip(data)
         }
     }
 
@@ -249,8 +251,10 @@ internal class GroupNotificationProcessor(
 
     /**
      * @see GroupAllowConfessTalkEvent
+     * @see MemberSpecialTitleChangeEvent
      */
-    private fun NoticePipelineContext.processAllowConfessTask(
+    //gray tip: 聊天中的灰色小框系统提示信息（无通用模板，为混合xml代码的文本）
+    private fun NoticePipelineContext.processNormalGrayTip(
         data: MsgType0x2DC,
     ) = data.context {
         val proto = data.buf.loadAs(TroopTips0x857.NotifyMsgBody.serializer(), offset = 1)
@@ -260,10 +264,10 @@ internal class GroupNotificationProcessor(
                 val tipsInfo = proto.optMsgGraytips ?: return
 
                 val message = tipsInfo.optBytesContent.decodeToString()
-                // 机器人信息
                 when (tipsInfo.robotGroupOpt) {
-                    // others
+                    // 非机器人信息
                     0 -> {
+                        //坦白说开关
                         if (message.endsWith("群聊坦白说")) {
                             val new = when (message) {
                                 "管理员已关闭群聊坦白说" -> false
@@ -273,7 +277,37 @@ internal class GroupNotificationProcessor(
                                     return
                                 }
                             }
-                            collect(GroupAllowConfessTalkEvent(new, !new, group, false))
+                            collect(
+                                GroupAllowConfessTalkEvent(
+                                    origin = !new,
+                                    new = new,
+                                    group = group,
+                                    isByBot = false
+                                )
+                            )
+                            //群特殊头衔授予
+                        } else if (message.endsWith(">头衔")) {
+                            message.parseToMessageDataList().let { seq ->
+                                if (seq.count() == 2) {
+                                    val uin = seq.first().data.toLong()
+                                    val newTitle = seq.last().text
+                                    val member = group.getMember(uin) ?: return@let
+                                    member.checkIsMemberImpl()
+                                    collect(
+                                        MemberSpecialTitleChangeEvent(
+                                            member.specialTitle,
+                                            newTitle,
+                                            member,
+                                            group.owner
+                                        )
+                                    )
+                                    member._specialTitle = newTitle
+                                } else {
+                                    logger.debug { "Unknown server special title messages $message" }
+                                    return
+                                }
+
+                            }
                         }
                     }
                 }
@@ -286,8 +320,9 @@ internal class GroupNotificationProcessor(
      * @see NudgeEvent
      * @see MemberHonorChangeEvent
      * @see GroupTalkativeChangeEvent
-     */ // gray tip: 聊天中的灰色小框系统提示信息
-    private fun NoticePipelineContext.processGrayTip(
+     */
+    // general gray tip: 聊天中的灰色小框系统提示信息（有通用模板）
+    private fun NoticePipelineContext.processGeneralGrayTip(
         data: MsgType0x2DC,
     ) = data.context {
         val grayTip = buf.loadAs(TroopTips0x857.NotifyMsgBody.serializer(), 1).optGeneralGrayTip
@@ -312,8 +347,12 @@ internal class GroupNotificationProcessor(
             }
             // 龙王
             10093L, 1053L, 1054L -> {
-                val now: NormalMember = grayTip.msgTemplParam["uin"]?.findMember() ?: group.botAsMember
-                val previous: NormalMember? = grayTip.msgTemplParam["uin_last"]?.findMember()
+                val now = grayTip.msgTemplParam["uin"]?.findMember() ?: group.botAsMember
+                val previous = grayTip.msgTemplParam["uin_last"]?.findMember()
+
+                val lastTalkative = group.lastTalkative.value
+                if (lastTalkative == now) return // duplicate
+                if (!group.lastTalkative.compareAndSet(lastTalkative, now)) return
 
                 if (previous == null) {
                     collect(MemberHonorChangeEvent.Achieve(now, GroupHonorType.TALKATIVE))
@@ -323,10 +362,11 @@ internal class GroupNotificationProcessor(
                     collect(MemberHonorChangeEvent.Achieve(now, GroupHonorType.TALKATIVE))
                 }
             }
+            //
             else -> {
                 markNotConsumed()
                 logger.debug {
-                    "Unknown Transformers528 0x14 template\ntemplId=${grayTip?.templId}\nPermList=${grayTip?.msgTemplParam?._miraiContentToString()}"
+                    "Unknown Transformers528 0x14 template\ntemplId=${grayTip?.templId}\nPermList=${grayTip?.msgTemplParam?.structureToString()}"
                 }
             }
         }

@@ -18,9 +18,7 @@ import net.mamoe.mirai.data.UserInfo
 import net.mamoe.mirai.event.broadcast
 import net.mamoe.mirai.event.events.*
 import net.mamoe.mirai.internal.QQAndroidBot
-import net.mamoe.mirai.internal.message.OfflineFriendImage
-import net.mamoe.mirai.internal.message.contextualBugReportException
-import net.mamoe.mirai.internal.message.getImageType
+import net.mamoe.mirai.internal.message.*
 import net.mamoe.mirai.internal.network.components.BdhSession
 import net.mamoe.mirai.internal.network.highway.ChannelKind
 import net.mamoe.mirai.internal.network.highway.Highway
@@ -33,7 +31,7 @@ import net.mamoe.mirai.internal.network.protocol.packet.chat.image.LongConn
 import net.mamoe.mirai.internal.network.protocol.packet.sendAndExpect
 import net.mamoe.mirai.internal.utils.AtomicIntSeq
 import net.mamoe.mirai.internal.utils.C2CPkgMsgParsingCache
-import net.mamoe.mirai.internal.utils._miraiContentToString
+import net.mamoe.mirai.internal.utils.structureToString
 import net.mamoe.mirai.message.MessageReceipt
 import net.mamoe.mirai.message.data.*
 import net.mamoe.mirai.utils.*
@@ -64,8 +62,8 @@ internal sealed class AbstractUser(
 ) : User, AbstractContact(bot, parentCoroutineContext) {
 
     final override val id: Long = userInfo.uin
-    final override var nick: String = userInfo.nick
-    final override val remark: String = userInfo.remark
+    abstract override val nick: String
+    abstract override val remark: String
 
     val messageSeq = AtomicIntSeq.forMessageSeq()
     val fragmentedMessageMerger = C2CPkgMsgParsingCache()
@@ -77,6 +75,7 @@ internal sealed class AbstractUser(
         if (BeforeImageUploadEvent(this, resource).broadcast().isCancelled) {
             throw EventCancelledException("cancelled by BeforeImageUploadEvent.ToGroup")
         }
+        val imageInfo = runBIO { resource.calculateImageInfo() }
         val resp = bot.network.run {
             LongConn.OffPicUp(
                 bot.client,
@@ -86,7 +85,10 @@ internal sealed class AbstractUser(
                     dstUin = this@AbstractUser.id,
                     fileMd5 = resource.md5,
                     fileSize = resource.size,
-                    fileName = resource.md5.toUHexString("") + "." + resource.formatName,
+                    imgWidth = imageInfo.width,
+                    imgHeight = imageInfo.height,
+                    imgType = getIdByImageType(imageInfo.imageType),
+                    fileName = "${resource.md5.toUHexString("")}.${resource.formatName}",
                     imgOriginal = true,
                     buildVer = bot.client.buildVer,
                 ),
@@ -99,22 +101,28 @@ internal sealed class AbstractUser(
                     .takeIf { it != ExternalResource.DEFAULT_FORMAT_NAME }
                     ?: resource.formatName
 
-                OfflineFriendImage(
-                    imageId = generateImageIdFromResourceId(
-                        resourceId = resp.resourceId,
-                        format = imageType
-                    ) ?: kotlin.run {
-                        if (resp.imageInfo.fileMd5.size == 16) {
-                            generateImageId(resp.imageInfo.fileMd5, imageType)
-                        } else {
-                            throw contextualBugReportException(
-                                "Failed to compute friend image image from resourceId: ${resp.resourceId}",
-                                resp._miraiContentToString(),
-                                additional = "并附加此时正在上传的文件"
-                            )
-                        }
-                    }
-                ).also {
+                resp.imageInfo.run {
+                    OfflineFriendImage(
+                        imageId = generateImageIdFromResourceId(
+                            resourceId = resp.resourceId,
+                            format = imageType
+                        ) ?: kotlin.run {
+                            if (resp.imageInfo.fileMd5.size == 16) {
+                                generateImageId(resp.imageInfo.fileMd5, imageType)
+                            } else {
+                                throw contextualBugReportException(
+                                    "Failed to compute friend image image from resourceId: ${resp.resourceId}",
+                                    resp.structureToString(),
+                                    additional = "并附加此时正在上传的文件"
+                                )
+                            }
+                        },
+                        width = fileWidth,
+                        height = fileHeight,
+                        imageType = getImageTypeById(fileType),
+                        size = resource.size
+                    )
+                }.also {
                     ImageUploadEvent.Succeed(this, resource, it).broadcast()
                 }
             }
@@ -138,7 +146,10 @@ internal sealed class AbstractUser(
                         uin = bot.id,
                         groupCode = id,
                         md5 = resource.md5,
-                        size = resource.size
+                        size = resource.size,
+                        picWidth = imageInfo.width,
+                        picHeight = imageInfo.height,
+                        picType = getIdByImageType(imageInfo.imageType),
                     ).sendAndExpect(bot)
 
                     when (response) {
@@ -205,9 +216,16 @@ internal sealed class AbstractUser(
                     )
                 }.getOrThrow()
 
-                OfflineFriendImage(
-                    generateImageIdFromResourceId(resp.resourceId, resource.formatName) ?: resp.resourceId
-                ).also {
+                imageInfo.run {
+                    OfflineFriendImage(
+                        imageId = generateImageIdFromResourceId(resp.resourceId, resource.formatName)
+                            ?: resp.resourceId,
+                        width = width,
+                        height = height,
+                        imageType = imageType,
+                        size = resource.size
+                    )
+                }.also {
                     ImageUploadEvent.Succeed(this, resource, it).broadcast()
                 }
             }
@@ -225,17 +243,25 @@ internal suspend fun <C : User> SendMessageHandler<out C>.sendMessageImpl(
     preSendEventConstructor: (C, Message) -> MessagePreSendEvent,
     postSendEventConstructor: (C, MessageChain, Throwable?, MessageReceipt<C>?) -> MessagePostSendEvent<C>,
 ): MessageReceipt<C> {
-    require(!message.isContentEmpty()) { "message is empty" }
+    val isMiraiInternal = if (message is MessageChain) {
+        message.anyIsInstance<MiraiInternalMessageFlag>()
+    } else false
 
-    val chain = contact.broadcastMessagePreSendEvent(message, preSendEventConstructor)
+    require(isMiraiInternal || !message.isContentEmpty()) { "message is empty" }
+
+    val chain = contact.broadcastMessagePreSendEvent(message, isMiraiInternal, preSendEventConstructor)
 
     val result = this
-        .runCatching { sendMessage(message, chain, SendMessageStep.FIRST) }
+        .runCatching { sendMessage(message, chain, isMiraiInternal, SendMessageStep.FIRST) }
 
-    // logMessageSent(result.getOrNull()?.source?.plus(chain) ?: chain) // log with source
-    contact.logMessageSent(chain)
+    if (result.isSuccess) {
+        // logMessageSent(result.getOrNull()?.source?.plus(chain) ?: chain) // log with source
+        contact.logMessageSent(chain)
+    }
 
-    postSendEventConstructor(contact, chain, result.exceptionOrNull(), result.getOrNull()).broadcast()
+    if (!isMiraiInternal) {
+        postSendEventConstructor(contact, chain, result.exceptionOrNull(), result.getOrNull()).broadcast()
+    }
 
     return result.getOrThrow()
 }

@@ -163,10 +163,6 @@ internal class NormalMemberImpl constructor(
         this._muteTimestamp = 0
     }
 
-    override suspend fun kick(message: String) {
-        kick(message, false)
-    }
-
     override suspend fun kick(message: String, block: Boolean) {
         checkBotPermissionHigherThanThis("kick")
         check(group.members[this.id] != null) {
@@ -175,11 +171,15 @@ internal class NormalMemberImpl constructor(
         bot.network.run {
             val response: TroopManagement.Kick.Response = TroopManagement.Kick(
                 client = bot.client,
-                member = this@NormalMemberImpl,
+                groupCode = group.groupCode,
+                memberId = id,
                 message = message,
                 ban = block
             ).sendAndExpect()
 
+            // Note: when member not found, result is still true.
+
+            if (response.ret == 255) error("Operation too fast") // https://github.com/mamoe/mirai/issues/1503
             check(response.success) { "kick failed: ${response.ret}" }
 
             @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")

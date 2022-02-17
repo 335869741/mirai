@@ -191,7 +191,8 @@ internal class TroopManagement {
 
         operator fun invoke(
             client: QQAndroidClient,
-            member: Member,
+            groupCode: Long,
+            memberId: Long,
             message: String,
             ban: Boolean
         ) = buildOutgoingUniPacket(client) {
@@ -202,16 +203,56 @@ internal class TroopManagement {
                     serviceType = 0,//或者1
                     result = 0,
                     bodybuffer = Oidb0x8a0.ReqBody(
-                        optUint64GroupCode = member.group.id,
+                        optUint64GroupCode = groupCode,
                         msgKickList = listOf(
                             Oidb0x8a0.KickMemberInfo(
                                 optUint32Operate = 5,
-                                optUint64MemberUin = member.id,
+                                optUint64MemberUin = memberId,
                                 optUint32Flag = if (ban) 1 else 0 //1为拉黑
                             )
                         ),
                         kickMsg = message.toByteArray()
                     ).toByteArray(Oidb0x8a0.ReqBody.serializer())
+                )
+            )
+        }
+
+    }
+
+    internal object SwitchAnonymousChat : OutgoingPacketFactory<SwitchAnonymousChat.Response>("OidbSvc.0x568_22") {
+        override suspend fun ByteReadPacket.decode(bot: QQAndroidBot): Response {
+            val ret = this.readBytes()
+                .loadAs(OidbSso.OIDBSSOPkg.serializer()).result
+            return Response(
+                ret == 0
+            )
+        }
+
+        class Response(
+            val success: Boolean
+        ) : Packet {
+            override fun toString(): String = "TroopManagement.SwitchAnonymousChat.Response($success)"
+        }
+
+        operator fun invoke(
+            client: QQAndroidClient,
+            groupCode: Long,
+            switch: Boolean
+        ) = buildOutgoingUniPacket(client) {
+            writeProtoBuf(
+                OidbSso.OIDBSSOPkg.serializer(),
+                OidbSso.OIDBSSOPkg(
+                    command = 1384,
+                    serviceType = 22,
+                    result = 0,
+                    bodybuffer = buildPacket {
+                        writeInt(groupCode.toInt())
+                        if (switch) {
+                            writeByte(1)
+                        } else {
+                            writeByte(0)
+                        }
+                    }.readBytes()
                 )
             )
         }

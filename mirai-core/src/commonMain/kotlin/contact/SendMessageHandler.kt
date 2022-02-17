@@ -23,13 +23,13 @@ import net.mamoe.mirai.internal.network.components.ClockHolder.Companion.clock
 import net.mamoe.mirai.internal.network.components.MessageSvcSyncer
 import net.mamoe.mirai.internal.network.handler.logger
 import net.mamoe.mirai.internal.network.notice.group.GroupMessageProcessor.SendGroupMessageReceipt
+import net.mamoe.mirai.internal.network.notice.priv.PrivateMessageProcessor.SendPrivateMessageReceipt
 import net.mamoe.mirai.internal.network.protocol.data.proto.MsgComm
 import net.mamoe.mirai.internal.network.protocol.packet.OutgoingPacket
 import net.mamoe.mirai.internal.network.protocol.packet.chat.FileManagement
 import net.mamoe.mirai.internal.network.protocol.packet.chat.MusicSharePacket
-import net.mamoe.mirai.internal.network.protocol.packet.chat.image.ImgStore
 import net.mamoe.mirai.internal.network.protocol.packet.chat.receive.*
-import net.mamoe.mirai.internal.network.protocol.packet.sendAndExpect
+import net.mamoe.mirai.internal.utils.ImagePatcher
 import net.mamoe.mirai.message.MessageReceipt
 import net.mamoe.mirai.message.data.*
 import net.mamoe.mirai.utils.castOrNull
@@ -100,7 +100,7 @@ internal abstract class SendMessageHandler<C : Contact> {
                 }
 
                 if (!contains(IgnoreLengthCheck)) {
-                    verityLength(this, contact)
+                    verifyLength(this, contact)
                 }
 
                 this
@@ -120,6 +120,7 @@ internal abstract class SendMessageHandler<C : Contact> {
         originalMessage: Message,
         transformedMessage: MessageChain,
         finalMessage: MessageChain,
+        isMiraiInternal: Boolean,
         step: SendMessageStep,
     ): MessageReceipt<C> {
         bot.components[MessageSvcSyncer].joinSync()
@@ -139,10 +140,20 @@ internal abstract class SendMessageHandler<C : Contact> {
                         if (resp is MessageSvcPbSendMsg.Response.MessageTooLarge) {
                             return when (step) {
                                 SendMessageStep.FIRST -> {
-                                    sendMessageImpl(originalMessage, transformedMessage, SendMessageStep.LONG_MESSAGE)
+                                    sendMessageImpl(
+                                        originalMessage,
+                                        transformedMessage,
+                                        isMiraiInternal,
+                                        SendMessageStep.LONG_MESSAGE,
+                                    )
                                 }
                                 SendMessageStep.LONG_MESSAGE -> {
-                                    sendMessageImpl(originalMessage, transformedMessage, SendMessageStep.FRAGMENTED)
+                                    sendMessageImpl(
+                                        originalMessage,
+                                        transformedMessage,
+                                        isMiraiInternal,
+                                        SendMessageStep.FRAGMENTED,
+                                    )
 
                                 }
                                 else -> {
@@ -155,10 +166,19 @@ internal abstract class SendMessageHandler<C : Contact> {
                                 }
                             }
                         }
+                        if (resp is MessageSvcPbSendMsg.Response.ServiceUnavailable) {
+                            throw IllegalStateException("Send message to $contact failed, server service is unavailable.")
+                        }
                         if (resp is MessageSvcPbSendMsg.Response.Failed) {
                             val contact = contact
                             when (resp.resultType) {
-                                120 -> if (contact is Group) throw BotIsBeingMutedException(contact)
+                                120 -> if (contact is Group) throw BotIsBeingMutedException(contact, originalMessage)
+                                121 -> if (AtAll in finalMessage) throw IllegalStateException("Send message to $contact failed, reached maximum AtAll times limit.")
+                                299 -> if (contact is Group) throw SendMessageFailedException(
+                                    contact,
+                                    SendMessageFailedException.Reason.GROUP_CHAT_LIMITED,
+                                    originalMessage
+                                )
                             }
                         }
                         check(resp is MessageSvcPbSendMsg.Response.SUCCESS) {
@@ -274,6 +294,14 @@ internal suspend fun <C : Contact> SendMessageHandler<C>.transformSpecialMessage
                     "ForwardMessage allows up to 200 nodes, but found ${forward.nodeList.size}"
                 )
             }
+            val tmp = ArrayList<SingleMessage>(
+                forward.nodeList.sumOf { it.messageChain.size }
+            )
+            forward.nodeList.forEach { tmp.addAll(it.messageChain) }
+
+            // toMessageChain will lose some element
+            @Suppress("INVISIBLE_MEMBER")
+            createMessageChainImplOptimized(tmp).verifyLength(forward, contact)
         }
 
         val resId = getMiraiImpl().uploadMessageHighway(
@@ -284,7 +312,7 @@ internal suspend fun <C : Contact> SendMessageHandler<C>.transformSpecialMessage
         )
         return RichMessage.forwardMessage(
             resId = resId,
-            timeSeconds = currentTimeSeconds(),
+            fileName = currentTimeSeconds().toString(),
             forwardMessage = forward,
         )
     }
@@ -303,6 +331,7 @@ internal suspend fun <C : Contact> SendMessageHandler<C>.transformSpecialMessage
 internal suspend fun <C : Contact> SendMessageHandler<C>.sendMessage(
     originalMessage: Message,
     transformedMessage: Message,
+    isMiraiInternal: Boolean,
     step: SendMessageStep,
 ): MessageReceipt<C> = sendMessageImpl(
     originalMessage,
@@ -311,6 +340,7 @@ internal suspend fun <C : Contact> SendMessageHandler<C>.sendMessage(
             preConversionTransformedMessage(transformedMessage)
         )
     ),
+    isMiraiInternal,
     step
 )
 
@@ -320,15 +350,19 @@ internal suspend fun <C : Contact> SendMessageHandler<C>.sendMessage(
 private suspend fun <C : Contact> SendMessageHandler<C>.sendMessageImpl(
     originalMessage: Message,
     transformedMessage: MessageChain,
+    isMiraiInternal: Boolean,
     step: SendMessageStep,
 ): MessageReceipt<C> { // Result cannot be in interface.
+    if (!isMiraiInternal && step == SendMessageStep.FIRST) {
+        transformedMessage.verifySendingValid()
+    }
     val chain = transformedMessage.convertToLongMessageIfNeeded(step)
 
     chain.findIsInstance<QuoteReply>()?.source?.ensureSequenceIdAvailable()
 
     postTransformActions(chain)
 
-    return sendMessagePacket(originalMessage, transformedMessage, chain, step)
+    return sendMessagePacket(originalMessage, transformedMessage, chain, isMiraiInternal, step)
 }
 
 internal sealed class UserSendMessageHandler<C : AbstractUser>(
@@ -349,6 +383,25 @@ internal class FriendSendMessageHandler(
 ) : UserSendMessageHandler<FriendImpl>(contact) {
     override val messageSvcSendMessage: (client: QQAndroidClient, contact: FriendImpl, message: MessageChain, fragmented: Boolean, sourceCallback: (Deferred<OnlineMessageSource.Outgoing>) -> Unit) -> List<OutgoingPacket> =
         MessageSvcPbSendMsg::createToFriend
+
+    override suspend fun constructSourceForSpecialMessage(
+        finalMessage: MessageChain,
+        fromAppId: Int
+    ): OnlineMessageSource.Outgoing {
+
+        val receipt: SendPrivateMessageReceipt = nextEventOrNull(3000) {
+            it.bot === bot && it.fromAppId == fromAppId
+        } ?: SendPrivateMessageReceipt.EMPTY
+
+        return OnlineMessageSourceToFriendImpl(
+            internalIds = intArrayOf(receipt.messageRandom),
+            sequenceIds = intArrayOf(receipt.sequenceId),
+            sender = bot,
+            target = contact,
+            time = bot.clock.server.currentTimeSeconds().toInt(),
+            originalMessage = finalMessage
+        )
+    }
 }
 
 internal class StrangerSendMessageHandler(
@@ -391,8 +444,9 @@ internal open class GroupSendMessageHandler(
         fromAppId: Int,
     ): OnlineMessageSource.Outgoing {
 
-        val receipt: SendGroupMessageReceipt =
-            nextEventOrNull(3000) { it.fromAppId == fromAppId } ?: SendGroupMessageReceipt.EMPTY
+        val receipt: SendGroupMessageReceipt = nextEventOrNull(3000) {
+            it.bot === bot && it.fromAppId == fromAppId
+        } ?: SendGroupMessageReceipt.EMPTY
 
         return OnlineMessageSourceToGroupImpl(
             contact,
@@ -407,55 +461,11 @@ internal open class GroupSendMessageHandler(
 
     companion object {
         private suspend fun GroupImpl.fixImageFileId(image: OfflineGroupImage) {
-            if (image.fileId == null) {
-                val response: ImgStore.GroupPicUp.Response = ImgStore.GroupPicUp(
-                    bot.client,
-                    uin = bot.id,
-                    groupCode = this.id,
-                    md5 = image.md5,
-                    size = 1,
-                ).sendAndExpect(bot)
-
-                when (response) {
-                    is ImgStore.GroupPicUp.Response.Failed -> {
-                        image.fileId = 0 // Failed
-                    }
-                    is ImgStore.GroupPicUp.Response.FileExists -> {
-                        image.fileId = response.fileId.toInt()
-                    }
-                    is ImgStore.GroupPicUp.Response.RequireUpload -> {
-                        image.fileId = response.fileId.toInt()
-                    }
-                }
-            }
+            bot.components[ImagePatcher].patchOfflineGroupImage(this, image)
         }
 
-        /**
-         * Ensures server holds the cache
-         */
         private suspend fun GroupImpl.updateFriendImageForGroupMessage(image: FriendImage): OfflineGroupImage {
-            bot.network.run {
-                val response = ImgStore.GroupPicUp(
-                    bot.client,
-                    uin = bot.id,
-                    groupCode = id,
-                    md5 = image.md5,
-                    size = if (image is OnlineFriendImageImpl) image.delegate.fileLen else 0
-                ).sendAndExpect()
-                return OfflineGroupImage(image.imageId).also { img ->
-                    when (response) {
-                        is ImgStore.GroupPicUp.Response.FileExists -> {
-                            img.fileId = response.fileId.toInt()
-                        }
-                        is ImgStore.GroupPicUp.Response.RequireUpload -> {
-                            img.fileId = response.fileId.toInt()
-                        }
-                        is ImgStore.GroupPicUp.Response.Failed -> {
-                            img.fileId = 0
-                        }
-                    }
-                }
-            }
+            return bot.components[ImagePatcher].patchFriendImageToGroupImage(this, image)
         }
     }
 }

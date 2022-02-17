@@ -17,6 +17,7 @@ import kotlinx.serialization.descriptors.PrimitiveSerialDescriptor
 import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
+import net.mamoe.mirai.utils.DeprecatedSinceMirai
 import net.mamoe.mirai.utils.MiraiExperimentalApi
 
 /**
@@ -42,8 +43,6 @@ public enum class GroupHonorType(public val value: Int) {
 @MiraiExperimentalApi
 @Serializable
 public data class GroupHonorListData(
-    @SerialName("acceptLanguages")
-    val acceptLanguages: List<Language?>? = null,
 
     @SerialName("gc")
     val gc: String?,
@@ -106,7 +105,21 @@ public data class GroupHonorListData(
     @SerialName("hwExcellentList")
     val hwExcellentList: List<Actor?>? = null
 ) {
-    @Serializable
+
+    @Deprecated(
+        message = "Meaningless response",
+        level = DeprecationLevel.HIDDEN,
+        replaceWith = ReplaceWith("error(\"Delete me\")"),
+    )
+    @DeprecatedSinceMirai(errorSince = "2.7", hiddenSince = "2.10") // maybe 2.7
+    @Suppress("DEPRECATION_ERROR")
+    val acceptLanguages: List<Language?>? get() = null
+
+    @Deprecated(
+        message = "Meaningless response",
+        level = DeprecationLevel.HIDDEN,
+    )
+    @DeprecatedSinceMirai(errorSince = "2.7", hiddenSince = "2.10") // maybe 2.7
     public data class Language(
         @SerialName("code")
         val code: String? = null,

@@ -12,28 +12,30 @@ pluginManagement {
         if (System.getProperty("use.maven.local") == "true") {
             mavenLocal()
         }
-//        mavenLocal()
         gradlePluginPortal()
         mavenCentral()
         google()
     }
 }
 
+val allProjects = mutableListOf<ProjectDescriptor>()
 rootProject.name = "mirai"
 
 fun includeProject(projectPath: String, dir: String? = null) {
     include(projectPath)
     if (dir != null) project(projectPath).projectDir = file(dir)
+    allProjects.add(project(projectPath))
 }
 
-include(":mirai-core-utils")
-include(":mirai-core-api")
-include(":mirai-core")
-include(":mirai-core-all")
+includeProject(":mirai-core-utils")
+includeProject(":mirai-core-api")
+includeProject(":mirai-core")
+includeProject(":mirai-core-all")
+includeProject(":mirai-bom")
+includeProject(":mirai-dokka")
 
-include(":binary-compatibility-validator")
-include(":binary-compatibility-validator-android")
-project(":binary-compatibility-validator-android").projectDir = file("binary-compatibility-validator/android")
+//includeProject(":binary-compatibility-validator")
+//includeProject(":binary-compatibility-validator-android", "binary-compatibility-validator/android")
 
 includeProject(":mirai-logging-log4j2", "logging/mirai-logging-log4j2")
 includeProject(":mirai-logging-slf4j", "logging/mirai-logging-slf4j")
@@ -41,48 +43,74 @@ includeProject(":mirai-logging-slf4j-simple", "logging/mirai-logging-slf4j-simpl
 includeProject(":mirai-logging-slf4j-logback", "logging/mirai-logging-slf4j-logback")
 
 
-fun includeConsoleProjects() {
-    val disableOldFrontEnds = true
+val disableOldFrontEnds = true
 
-    fun includeConsoleProject(projectPath: String, dir: String? = null) =
-        includeProject(projectPath, "mirai-console/$dir")
+fun includeConsoleProject(projectPath: String, dir: String? = null) =
+    includeProject(projectPath, "mirai-console/$dir")
 
-    includeConsoleProject(":mirai-console-compiler-annotations", "tools/compiler-annotations")
-    includeConsoleProject(":mirai-console", "backend/mirai-console")
-    includeConsoleProject(":mirai-console.codegen", "backend/codegen")
+includeConsoleProject(":mirai-console-compiler-annotations", "tools/compiler-annotations")
+includeConsoleProject(":mirai-console", "backend/mirai-console")
+includeConsoleProject(":mirai-console.codegen", "backend/codegen")
+includeConsoleProject(":mirai-console-terminal", "frontend/mirai-console-terminal")
+
+// region mirai-console.integration-test
+includeConsoleProject(":mirai-console.integration-test", "backend/integration-test")
+
+val consoleIntegrationTestSubPluginBuildGradleKtsTemplate by lazy {
+    rootProject.projectDir
+        .resolve("mirai-console/backend/integration-test/testers")
+        .resolve("tester.template.gradle.kts")
+        .readText()
+}
+
+@Suppress("SimpleRedundantLet")
+fun includeConsoleITPlugin(path: File) {
+    path.resolve("build.gradle.kts").takeIf { !it.isFile }?.let { initScript ->
+        initScript.writeText(consoleIntegrationTestSubPluginBuildGradleKtsTemplate)
+    }
+
+    val projectPath = ":mirai-console.integration-test:${path.name}"
+    include(projectPath)
+    project(projectPath).projectDir = path
+}
+rootProject.projectDir
+    .resolve("mirai-console/backend/integration-test/testers")
+    .listFiles()?.asSequence().orEmpty()
+    .filter { it.isDirectory }
+    .forEach { includeConsoleITPlugin(it) }
+// endregion
+
+includeConsoleProject(":mirai-console-compiler-common", "tools/compiler-common")
+includeConsoleProject(":mirai-console-intellij", "tools/intellij-plugin")
+includeConsoleProject(":mirai-console-gradle", "tools/gradle-plugin")
+
+@Suppress("ConstantConditionIf")
+if (!disableOldFrontEnds) {
     includeConsoleProject(":mirai-console-terminal", "frontend/mirai-console-terminal")
-    includeConsoleProject(":mirai-console-compiler-common", "tools/compiler-common")
-    includeConsoleProject(":mirai-console-intellij", "tools/intellij-plugin")
-    includeConsoleProject(":mirai-console-gradle", "tools/gradle-plugin")
 
-    @Suppress("ConstantConditionIf")
-    if (!disableOldFrontEnds) {
-        includeConsoleProject(":mirai-console-terminal", "frontend/mirai-console-terminal")
+    println("JDK version: ${JavaVersion.current()}")
 
-        println("JDK version: ${JavaVersion.current()}")
-
-        if (JavaVersion.current() >= JavaVersion.VERSION_1_9) {
-            includeConsoleProject(":mirai-console-graphical", "frontend/mirai-console-graphical")
-        } else {
-            println("当前使用的 JDK 版本为 ${System.getProperty("java.version")},  请使用 JDK 9 以上版本引入模块 `:mirai-console-graphical`\n")
-        }
+    if (JavaVersion.current() >= JavaVersion.VERSION_1_9) {
+        includeConsoleProject(":mirai-console-graphical", "frontend/mirai-console-graphical")
+    } else {
+        println("当前使用的 JDK 版本为 ${System.getProperty("java.version")},  请使用 JDK 9 以上版本引入模块 `:mirai-console-graphical`\n")
     }
 }
 
-fun isMiraiConsoleCloned(): Boolean {
-    return file("mirai-console/build.gradle.kts").exists()
-}
+includeProject(":ci-release-helper")
 
-if (isMiraiConsoleCloned()) {
-    includeConsoleProjects()
-} else {
-    logger.warn(
-        """
-            [mirai] mirai-console submodule is not configured. 
-            Please execute `git submodule init` and `git submodule update` to include mirai-console build if you want.
-            If you develop only on mirai-core, it's not compulsory to include mirai-console.
-        """.trimIndent()
-    )
-}
 
-include(":ci-release-helper")
+val result = mutableListOf<ProjectDescriptor>()
+for (project in allProjects) {
+    val validationDir = project.projectDir.resolve("compatibility-validation")
+    if (!validationDir.exists()) continue
+    validationDir.listFiles().orEmpty<File>().forEach { dir ->
+        if (dir.resolve("build.gradle.kts").isFile) {
+            val path = ":validator" + project.path + ":${dir.name}"
+            include(path)
+            project(path).projectDir = dir
+//            project(path).name = "${project.name}-validator-${dir.name}"
+            result.add(project(path))
+        }
+    }
+}

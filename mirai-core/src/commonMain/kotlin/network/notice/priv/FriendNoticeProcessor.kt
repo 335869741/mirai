@@ -33,11 +33,12 @@ import net.mamoe.mirai.internal.network.protocol.data.proto.Submsgtype0x122
 import net.mamoe.mirai.internal.network.protocol.data.proto.Submsgtype0x27.SubMsgType0x27.*
 import net.mamoe.mirai.internal.network.protocol.data.proto.Submsgtype0x44.Submsgtype0x44
 import net.mamoe.mirai.internal.network.protocol.data.proto.Submsgtype0xb3.SubMsgType0xb3
+import net.mamoe.mirai.internal.network.protocol.packet.chat.NewContact
 import net.mamoe.mirai.internal.network.protocol.packet.list.FriendList.GetFriendGroupList
 import net.mamoe.mirai.internal.network.protocol.packet.sendAndExpect
-import net.mamoe.mirai.internal.utils._miraiContentToString
 import net.mamoe.mirai.internal.utils.io.ProtoBuf
 import net.mamoe.mirai.internal.utils.io.serialization.loadAs
+import net.mamoe.mirai.internal.utils.structureToString
 import net.mamoe.mirai.utils.*
 
 /**
@@ -80,15 +81,20 @@ internal class FriendNoticeProcessor(
         }
 
         msgHead.context {
-            if (fromUin == authUin) {
-                logger.error { "Could not determine uin since `fromUin` = `authUin` = $fromUin" }
+            // 对方 qq
+            val id = longArrayOf(fromUin, authUin).firstOrNull { it != 0L && it != bot.id }
+            if (id == null) {
+                logger.error { "Could not determine uin for new stranger" }
                 return
             }
-            val id = fromUin or authUin // 对方 qq
             if (bot.getStranger(id) != null) return
 
             val nick = fromNick.ifEmpty { authNick }.ifEmpty { pbNick }
             collect(StrangerAddEvent(bot.addNewStranger(StrangerInfoImpl(id, nick, fromGroup)) ?: return))
+            //同时需要请求好友验证消息（有新请求需要同意）
+            bot.network.run {
+                NewContact.SystemMsgNewFriend(bot.client).sendWithoutExpect()
+            }
         }
 
     }
@@ -200,7 +206,7 @@ internal class FriendNoticeProcessor(
                         bot.nick = to
                     } else {
                         val friend = bot.getFriend(body.uin)?.impl() ?: continue
-                        val from = bot.nick
+                        val from = friend.nick
                         if (from == to) continue
                         collect(FriendNickChangedEvent(friend, from, to))
                         friend.info.nick = to
@@ -210,7 +216,7 @@ internal class FriendNoticeProcessor(
             }
         }
         if (body.msgProfileInfos.isEmpty() || containsUnknown) {
-            logger.debug { "Transformers528 0x27L: ProfileChanged new data: ${body._miraiContentToString()}" }
+            logger.debug { "Transformers528 0x27L: ProfileChanged new data: ${body.structureToString()}" }
         }
     }
 

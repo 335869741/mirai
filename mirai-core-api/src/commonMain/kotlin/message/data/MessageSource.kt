@@ -17,7 +17,7 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.serialization.Serializable
-import net.mamoe.kjbb.JvmBlockingBridge
+import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.IMirai
 import net.mamoe.mirai.Mirai
@@ -558,9 +558,9 @@ public sealed class OnlineMessageSource : MessageSource() { // TODO: 2021/1/10 E
                 AbstractPolymorphicMessageKey<Incoming, FromGroup>(Incoming, { it.safeCast() })
 
             public abstract override val sender: Member
-            public final override val subject: Group get() = sender.group
-            public final override val target: Group get() = group
-            public inline val group: Group get() = sender.group
+            public override val subject: Group get() = sender.group
+            public final override val target: Group get() = subject
+            public inline val group: Group get() = subject
         }
 
         public companion object Key :

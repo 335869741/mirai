@@ -12,11 +12,11 @@ package net.mamoe.mirai.internal.message
 import kotlinx.serialization.Transient
 import net.mamoe.mirai.contact.Contact
 import net.mamoe.mirai.internal.contact.SendMessageHandler
+import net.mamoe.mirai.internal.message.LightMessageRefiner.dropMiraiInternalFlags
 import net.mamoe.mirai.internal.message.LightMessageRefiner.refineLight
 import net.mamoe.mirai.internal.network.protocol.data.proto.ImMsgBody
 import net.mamoe.mirai.message.MessageReceipt
 import net.mamoe.mirai.message.data.*
-import net.mamoe.mirai.utils.cast
 import java.util.concurrent.atomic.AtomicBoolean
 
 
@@ -59,6 +59,20 @@ internal interface OutgoingMessageSourceInternal : MessageSourceInternal {
     var originalMessage: MessageChain
 }
 
+/**
+ * All [OnlineMessageSource.Incoming] should implement this interface.
+ *
+ */
+internal interface IncomingMessageSourceInternal : MessageSourceInternal {
+    // #1532, #1289
+    // 问题描述: 解析 Incoming 时存在中间元素 (如 ForwardMessageInternal) 等,
+    // MessageChain.source.originMessage 中可能因为各种原因而存在这些中间元素
+
+    // 于是在广播 MessageEvent 前将 originalMessage 改成 refined 后的 MessageChain
+
+    var originalMessageLazy: Lazy<MessageChain>
+}
+
 @Suppress("DEPRECATION_ERROR")
 internal fun <C : Contact> OnlineMessageSource.Outgoing.createMessageReceipt(
     target: C,
@@ -66,7 +80,9 @@ internal fun <C : Contact> OnlineMessageSource.Outgoing.createMessageReceipt(
 ): MessageReceipt<C> {
     if (doLightRefine) {
         check(this is OutgoingMessageSourceInternal) { "Internal error: source !is OutgoingMessageSourceInternal" }
-        this.originalMessage = this.originalMessage.refineLight(bot)
+        this.originalMessage = this.originalMessage
+            .dropMiraiInternalFlags()
+            .refineLight(bot)
     }
     return MessageReceipt(this, target)
 }

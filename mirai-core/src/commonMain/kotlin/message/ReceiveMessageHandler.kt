@@ -23,7 +23,10 @@ import net.mamoe.mirai.internal.network.protocol.data.proto.*
 import net.mamoe.mirai.internal.utils.io.serialization.loadAs
 import net.mamoe.mirai.internal.utils.io.serialization.readProtoBuf
 import net.mamoe.mirai.message.data.*
-import net.mamoe.mirai.utils.*
+import net.mamoe.mirai.utils.read
+import net.mamoe.mirai.utils.toLongUnsigned
+import net.mamoe.mirai.utils.toUHexString
+import net.mamoe.mirai.utils.unzip
 
 /**
  * 只在手动构造 [OfflineMessageSource] 时调用
@@ -48,6 +51,27 @@ internal suspend fun List<MsgComm.Msg>.toMessageChainOnline(
     refineContext: RefineContext = EmptyRefineContext,
 ): MessageChain {
     return toMessageChain(bot, groupIdOrZero, true, messageSourceKind).refineDeep(bot, refineContext)
+}
+
+internal suspend fun MsgComm.Msg.toMessageChainOnline(
+    bot: Bot,
+    refineContext: RefineContext = EmptyRefineContext,
+): MessageChain {
+    fun getSourceKind(c2cCmd: Int): MessageSourceKind {
+        return when (c2cCmd) {
+            11 -> MessageSourceKind.FRIEND // bot 给其他人发消息
+            4 -> MessageSourceKind.FRIEND // bot 给自己作为好友发消息 (非 other client)
+            1 -> MessageSourceKind.GROUP
+            else -> error("Could not get source kind from c2cCmd: $c2cCmd")
+        }
+    }
+
+    val kind = getSourceKind(msgHead.c2cCmd)
+    val groupId = when (kind) {
+        MessageSourceKind.GROUP -> msgHead.groupInfo?.groupCode ?: 0
+        else -> 0
+    }
+    return listOf(this).toMessageChainOnline(bot, groupId, kind, refineContext)
 }
 
 //internal fun List<MsgComm.Msg>.toMessageChainOffline(
@@ -197,76 +221,82 @@ internal object ReceiveMessageTransformer {
             }
             index++
         }
+
+        // delete empty plain text
+        removeAll { it is PlainText && it.content.isEmpty() }
     }
 
     fun MessageChain.cleanupRubbishMessageElements(): MessageChain {
-        var previousLast: SingleMessage? = null
-        var last: SingleMessage? = null
-        return buildMessageChain(initialSize = this.count()) {
-            this@cleanupRubbishMessageElements.forEach { element ->
-                @Suppress("INVISIBLE_MEMBER", "INVISIBLE_REFERENCE")
-                if (last is LongMessageInternal && element is PlainText) {
-                    if (element == UNSUPPORTED_MERGED_MESSAGE_PLAIN) {
-                        previousLast = last
-                        last = element
-                        return@forEach
-                    }
-                }
-                if (last is PokeMessage && element is PlainText) {
-                    if (element == UNSUPPORTED_POKE_MESSAGE_PLAIN) {
-                        previousLast = last
-                        last = element
-                        return@forEach
-                    }
-                }
-                if (last is VipFace && element is PlainText) {
-                    val l = last as VipFace
-                    if (element.content.length == 4 + (l.count / 10) + l.kind.name.length) {
-                        previousLast = last
-                        last = element
-                        return@forEach
-                    }
-                }
-                // 解决tim发送的语音无法正常识别
-                if (element is PlainText) {
-                    if (element == UNSUPPORTED_VOICE_MESSAGE_PLAIN) {
-                        previousLast = last
-                        last = element
-                        return@forEach
-                    }
-                }
+        val builder = MessageChainBuilder(initialSize = count()).also {
+            it.addAll(this)
+        }
 
-                if (element is PlainText && last is At && previousLast is QuoteReply
-                    && element.content.startsWith(' ')
-                ) {
-                    // Android QQ 发送, 是 Quote+At+PlainText(" xxx") // 首空格
-                    removeLastOrNull() // At
-                    val new = PlainText(element.content.substring(1))
-                    add(new)
-                    previousLast = null
-                    last = new
-                    return@forEach
-                }
+        kotlin.run moveQuoteReply@{ // Move QuoteReply after MessageSource
+            val exceptedQuoteReplyIndex = builder.indexOfFirst { it is MessageSource } + 1
+            val quoteReplyIndex = builder.indexOfFirst { it is QuoteReply }
+            if (quoteReplyIndex < 1) return@moveQuoteReply
+            if (quoteReplyIndex != exceptedQuoteReplyIndex) {
+                val qr = builder[quoteReplyIndex]
+                builder.removeAt(quoteReplyIndex)
+                builder.add(exceptedQuoteReplyIndex, qr)
+            }
+        }
 
-                if (element is QuoteReply) {
-                    // 客户端为兼容早期不支持 QuoteReply 的客户端而添加的 At
-                    removeLastOrNull()?.let { rm ->
-                        if ((rm as? PlainText)?.content != " ") add(rm)
-                        else removeLastOrNull()?.let { rm2 ->
-                            if (rm2 !is At) add(rm2)
+        kotlin.run quote@{
+            val quoteReplyIndex = builder.indexOfFirst { it is QuoteReply }
+            if (quoteReplyIndex >= 0) {
+                // QuoteReply + At + PlainText(space 1)
+                if (quoteReplyIndex < builder.size - 1) {
+                    if (builder[quoteReplyIndex + 1] is At) {
+                        builder.removeAt(quoteReplyIndex + 1)
+                    }
+                    if (quoteReplyIndex < builder.size - 1) {
+                        val elm = builder[quoteReplyIndex + 1]
+                        if (elm is PlainText && elm.content.startsWith(' ')) {
+                            if (elm.content.length == 1) {
+                                builder.removeAt(quoteReplyIndex + 1)
+                            } else {
+                                builder[quoteReplyIndex + 1] = PlainText(elm.content.substring(1))
+                            }
                         }
                     }
+                    return@quote
                 }
-
-                append(element)
-
-                previousLast = last
-                last = element
             }
-
-            // 处理分片信息
-            compressContinuousPlainText()
         }
+
+        // TIM audios
+        if (builder.any { it is Audio }) {
+            builder.remove(UNSUPPORTED_VOICE_MESSAGE_PLAIN)
+        }
+
+        kotlin.run { // VipFace
+            val vipFaceIndex = builder.indexOfFirst { it is VipFace }
+            if (vipFaceIndex >= 0 && vipFaceIndex < builder.size - 1) {
+                val l = builder[vipFaceIndex] as VipFace
+                val text = builder[vipFaceIndex + 1]
+                if (text is PlainText) {
+                    if (text.content.length == 4 + (l.count / 10) + l.kind.name.length) {
+                        builder.removeAt(vipFaceIndex + 1)
+                    }
+                }
+            }
+        }
+
+        fun removeSuffixText(index: Int, text: PlainText) {
+            if (index >= 0 && index < builder.size - 1) {
+                if (builder[index + 1] == text) {
+                    builder.removeAt(index + 1)
+                }
+            }
+        }
+
+        removeSuffixText(builder.indexOfFirst { it is LongMessageInternal }, UNSUPPORTED_MERGED_MESSAGE_PLAIN)
+        removeSuffixText(builder.indexOfFirst { it is PokeMessage }, UNSUPPORTED_POKE_MESSAGE_PLAIN)
+
+        builder.compressContinuousPlainText()
+
+        return builder.asMessageChain()
     }
 
     private fun decodeText(text: ImMsgBody.Text, list: MessageChainBuilder) {
@@ -315,8 +345,8 @@ internal object ReceiveMessageTransformer {
         val content = runWithBugReport("解析 lightApp",
             { "resId=" + lightApp.msgResid + "data=" + lightApp.data.toUHexString() }) {
             when (lightApp.data[0].toInt()) {
-                0 -> lightApp.data.encodeToString(offset = 1)
-                1 -> lightApp.data.unzip(1).encodeToString()
+                0 -> lightApp.data.decodeToString(startIndex = 1)
+                1 -> lightApp.data.unzip(1).decodeToString()
                 else -> error("unknown compression flag=${lightApp.data[0]}")
             }
         }
@@ -454,12 +484,28 @@ internal object ReceiveMessageTransformer {
     ) {
         val content = runWithBugReport("解析 richMsg", { richMsg.template1.toUHexString() }) {
             when (richMsg.template1[0].toInt()) {
-                0 -> richMsg.template1.encodeToString(offset = 1)
-                1 -> richMsg.template1.unzip(1).encodeToString()
+                0 -> richMsg.template1.decodeToString(startIndex = 1)
+                1 -> richMsg.template1.unzip(1).decodeToString()
                 else -> error("unknown compression flag=${richMsg.template1[0]}")
             }
         }
-        when (richMsg.serviceId) {
+
+        fun findStringProperty(name: String): String {
+            return content.substringAfter("$name=\"", "").substringBefore("\"", "")
+        }
+
+        val serviceId = when (val sid = richMsg.serviceId) {
+            0 -> {
+                val serviceIdStr = findStringProperty("serviceID")
+                if (serviceIdStr.isEmpty() || serviceIdStr.isBlank()) {
+                    0
+                } else {
+                    serviceIdStr.toIntOrNull() ?: 0
+                }
+            }
+            else -> sid
+        }
+        when (serviceId) {
             // 5: 使用微博长图转换功能分享到QQ群
             /*
                         <?xml version="1.0" encoding="utf-8"?><msg serviceID="5" templateID="12345" brief="[分享]想要沐浴阳光，就别钻进
@@ -477,27 +523,24 @@ internal object ReceiveMessageTransformer {
              * [LongMessageInternal], [ForwardMessage]
              */
             35 -> {
-                fun findStringProperty(name: String): String {
-                    return content.substringAfter("$name=\"", "").substringBefore("\"", "")
-                }
 
                 val resId = findStringProperty("m_resid")
+                val fileName = findStringProperty("m_fileName").takeIf { it.isNotEmpty() }
 
                 val msg = if (resId.isEmpty()) {
                     // Nested ForwardMessage
-                    val fileName = findStringProperty("m_fileName")
-                    if (fileName.isNotEmpty() && findStringProperty("action") == "viewMultiMsg") {
+                    if (fileName != null && findStringProperty("action") == "viewMultiMsg") {
                         ForwardMessageInternal(content, null, fileName)
                     } else {
                         SimpleServiceMessage(35, content)
                     }
                 } else when (findStringProperty("multiMsgFlag").toIntOrNull()) {
                     1 -> LongMessageInternal(content, resId)
-                    0 -> ForwardMessageInternal(content, resId, null)
+                    0 -> ForwardMessageInternal(content, resId, fileName)
                     else -> {
                         // from PC QQ
                         if (findStringProperty("action") == "viewMultiMsg") {
-                            ForwardMessageInternal(content, resId, null)
+                            ForwardMessageInternal(content, resId, fileName)
                         } else {
                             SimpleServiceMessage(35, content)
                         }
@@ -509,17 +552,17 @@ internal object ReceiveMessageTransformer {
 
             // 104 新群员入群的消息
             else -> {
-                builder.add(SimpleServiceMessage(richMsg.serviceId, content))
+                builder.add(SimpleServiceMessage(serviceId, content))
             }
         }
     }
 
     fun ImMsgBody.Ptt.toAudio() = OnlineAudioImpl(
-        filename = fileName.encodeToString(),
+        filename = fileName.decodeToString(),
         fileMd5 = fileMd5,
         fileSize = fileSize.toLongUnsigned(),
         codec = AudioCodec.fromId(format),
-        url = downPara.encodeToString(),
+        url = downPara.decodeToString(),
         length = time.toLongUnsigned(),
         originalPtt = this,
     )

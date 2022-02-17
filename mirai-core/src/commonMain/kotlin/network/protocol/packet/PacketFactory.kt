@@ -27,6 +27,7 @@ import net.mamoe.mirai.internal.network.protocol.packet.login.Heartbeat
 import net.mamoe.mirai.internal.network.protocol.packet.login.StatSvc
 import net.mamoe.mirai.internal.network.protocol.packet.login.WtLogin
 import net.mamoe.mirai.internal.network.protocol.packet.summarycard.SummaryCard
+import net.mamoe.mirai.utils.DeprecatedSinceMirai
 import net.mamoe.mirai.utils.MiraiLoggerWithSwitch
 
 internal sealed class PacketFactory<TPacket : Packet?> {
@@ -114,9 +115,10 @@ internal suspend inline fun <P : Packet?> IncomingPacketFactory<P>.decode(
 @Deprecated(
     "Kept for binary compatibility.",
     ReplaceWith("PacketCodec.PacketLogger", "net.mamoe.mirai.internal.network.components.PacketCodec"),
-    level = DeprecationLevel.ERROR,
+    level = DeprecationLevel.HIDDEN,
 )
 @PublishedApi
+@DeprecatedSinceMirai(hiddenSince = "2.7")
 internal val PacketLogger: MiraiLoggerWithSwitch
     get() = PacketCodec.PacketLogger
 
@@ -135,6 +137,7 @@ internal object KnownPacketFactories {
         MessageSvcPushForceOffline,
         MessageSvcPbSendMsg,
         MessageSvcPbDeleteMsg,
+        MessageSvcPbGetRoamMsgReq,
         FriendList.GetFriendGroupList,
         FriendList.DelFriend,
         FriendList.GetTroopListSimplify,
@@ -142,6 +145,7 @@ internal object KnownPacketFactories {
         ImgStore.GroupPicUp,
         PttStore.GroupPttUp,
         PttStore.GroupPttDown,
+        PttStore.C2CPttDown,
         LongConn.OffPicUp,
 //        LongConn.OffPicDown,
         TroopManagement.EditSpecialTitle,
@@ -152,6 +156,7 @@ internal object KnownPacketFactories {
         //  TroopManagement.GetGroupInfo,
         TroopManagement.EditGroupNametag,
         TroopManagement.Kick,
+        TroopManagement.SwitchAnonymousChat,
         TroopEssenceMsgManager.SetEssence,
         NudgePacket,
         Heartbeat.Alive,

@@ -107,10 +107,10 @@ internal open class NettyNetworkHandler(
                     handlePipelineException(ctx, cause)
                 }
             })
-            .addLast(OutgoingPacketEncoder())
+            .addLast("outgoing-packet-encoder", OutgoingPacketEncoder())
             .addLast(LengthFieldBasedFrameDecoder(Int.MAX_VALUE, 0, 4, -4, 4))
             .addLast(ByteBufToIncomingPacketDecoder())
-            .addLast(RawIncomingPacketCollector(decodePipeline))
+            .addLast("raw-packet-collector", RawIncomingPacketCollector(decodePipeline))
     }
 
     protected open fun createDummyDecodePipeline() = PacketDecodePipeline(this@NettyNetworkHandler.coroutineContext)
