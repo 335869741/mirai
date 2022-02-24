@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -82,6 +82,44 @@ public interface PluginManager {
      */
     public val pluginsConfigFolder: File
 
+    /**
+     * 插件运行时依赖存放路径 [Path], 插件自动下载的依赖都会存放于此目录
+     *
+     * **实现细节**: 在 terminal 前端实现为 `$rootPath/plugin-libraries`,
+     * 依赖 jar 文件由插件共享, 但是运行时插件加载的类是互相隔离的
+     *
+     * @since 2.11
+     */
+    public val pluginLibrariesPath: Path
+
+    /**
+     * 插件运行时依赖存放路径 [File], 插件自动下载的依赖都会存放于此目录
+     *
+     * **实现细节**: 在 terminal 前端实现为 `$rootPath/plugin-libraries`,
+     * 依赖 jar 文件由插件共享, 但是运行时插件加载的类是互相隔离的
+     *
+     * @since 2.11
+     */
+    public val pluginLibrariesFolder: File
+
+    /**
+     * 插件运行时依赖存放路径 [Path], 该路径下的依赖由全部插件共享
+     *
+     * **实现细节**: 在 terminal 前端实现为 `$rootPath/plugin-shared-libraries`
+     *
+     * @since 2.11
+     */
+    public val pluginSharedLibrariesPath: Path
+
+    /**
+     * 插件运行时依赖存放路径 [File], 该路径下的依赖由全部插件共享
+     *
+     * **实现细节**: 在 terminal 前端实现为 `$rootPath/plugin-shared-libraries`
+     *
+     * @since 2.11
+     */
+    public val pluginSharedLibrariesFolder: File
+
     // endregion
 
 
@@ -139,7 +177,7 @@ public interface PluginManager {
     /**
      * [PluginManager] 实例. 转发所有调用到 [MiraiConsole.pluginManager].
      */
-    public companion object INSTANCE : PluginManager by (dynamicDelegation(MiraiConsole::pluginManager)) {
+    public companion object INSTANCE : PluginManager by (dynamicDelegation { MiraiConsole.pluginManager }) {
         /**
          * 经过泛型类型转换的 [Plugin.loader]
          */

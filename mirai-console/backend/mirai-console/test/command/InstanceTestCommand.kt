@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -12,6 +12,7 @@
 package net.mamoe.mirai.console.command
 
 import kotlinx.coroutines.runBlocking
+import net.mamoe.mirai.console.MiraiConsoleImplementation
 import net.mamoe.mirai.console.Testing
 import net.mamoe.mirai.console.Testing.withTesting
 import net.mamoe.mirai.console.command.CommandManager.INSTANCE.getRegisteredCommands
@@ -22,7 +23,6 @@ import net.mamoe.mirai.console.command.CommandManager.INSTANCE.unregisterCommand
 import net.mamoe.mirai.console.command.descriptor.CommandValueArgumentParser
 import net.mamoe.mirai.console.command.descriptor.ExperimentalCommandDescriptors
 import net.mamoe.mirai.console.command.descriptor.buildCommandArgumentContext
-import net.mamoe.mirai.console.internal.MiraiConsoleImplementationBridge
 import net.mamoe.mirai.console.internal.command.CommandManagerImpl
 import net.mamoe.mirai.console.internal.command.flattenCommandComponents
 import net.mamoe.mirai.console.testFramework.AbstractConsoleInstanceTest
@@ -161,7 +161,7 @@ internal val owner by lazy { TestUnitCommandOwner }
 
 @OptIn(ExperimentalCommandDescriptors::class)
 internal class InstanceTestCommand : AbstractConsoleInstanceTest() {
-    private val manager by lazy { MiraiConsoleImplementationBridge.commandManager as CommandManagerImpl }
+    private val manager by lazy { MiraiConsoleImplementation.getBridge().commandManager as CommandManagerImpl }
 
     @Test
     fun testRegister() {
@@ -318,6 +318,123 @@ internal class InstanceTestCommand : AbstractConsoleInstanceTest() {
         TestSimpleCommand.withRegistration {
             assertEquals(arrayOf("test", "ttt", "tt").joinToString(), withTesting<MessageChain> {
                 assertSuccess(TestSimpleCommand.execute(sender, PlainText("test ttt tt")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsEscape() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "esc ape").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test esc\\ ape")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsQuote() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "esc ape").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test \"esc ape\"")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsQuoteReject() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "es\"c", "ape\"").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test es\"c ape\"")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsQuoteEscape() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "\"esc", "ape\"").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test \\\"esc ape\"")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsMultipleQuotes() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "esc ape", "1 2").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test \"esc ape\" \"1 2\"")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsMisplacedQuote() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "esc ape", "1\"", "\"2").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test \"esc ape\" 1\" \"2 ")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsQuoteSpaceEscape() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test \"esc", "ape\"").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test\\ \"esc ape\"")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsStopParse() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "esc ape  ").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test -- esc ape  ")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsStopParse2() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "esc ape  test\\12\"\"3").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test --  esc ape  test\\12\"\"3")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsStopParseReject() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test--", "esc", "ape").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test-- esc ape  ")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsStopParseEscape() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "--", "esc", "ape").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test \\-- esc ape")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsStopParseEscape2() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", " --", "esc", "ape").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test \\ -- esc ape")))
+            }.joinToString())
+        }
+    }
+
+    @Test
+    fun testSimpleArgsStopParseQuote() = runBlocking {
+        TestSimpleCommand.withRegistration {
+            assertEquals(arrayOf("test", "--", "esc", "ape").joinToString(), withTesting<MessageChain> {
+                assertSuccess(TestSimpleCommand.execute(sender, PlainText("test \"--\" esc ape")))
             }.joinToString())
         }
     }

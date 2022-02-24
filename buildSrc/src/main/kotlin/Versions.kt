@@ -39,7 +39,7 @@ object Versions {
     const val coroutinesIo = "0.1.16"
 
     const val blockingBridge = "2.0.0-160.3"
-    const val dynamicDelegation = "0.1.1-160.1"
+    const val dynamicDelegation = "0.2.0-160.1"
 
     const val androidGradlePlugin = "4.1.1"
     const val android = "4.1.1.4"
@@ -53,6 +53,8 @@ object Versions {
     const val difflib = "1.3.0"
     const val netty = "4.1.63.Final"
     const val bouncycastle = "1.64"
+    const val mavenArtifactResolver = "1.7.3"
+    const val mavenResolverProvider = "3.8.4"
 
     const val junit = "5.7.2"
 
@@ -151,3 +153,9 @@ const val `caller-finder` = "io.github.karlatemp:caller:1.1.1"
 const val `android-runtime` = "com.google.android:android:${Versions.android}"
 const val `netty-all` = "io.netty:netty-all:${Versions.netty}"
 const val `bouncycastle` = "org.bouncycastle:bcprov-jdk15on:${Versions.bouncycastle}"
+
+const val `maven-resolver-api` = "org.apache.maven.resolver:maven-resolver-api:${Versions.mavenArtifactResolver}"
+const val `maven-resolver-impl` = "org.apache.maven.resolver:maven-resolver-impl:${Versions.mavenArtifactResolver}"
+const val `maven-resolver-connector-basic` = "org.apache.maven.resolver:maven-resolver-connector-basic:${Versions.mavenArtifactResolver}"
+const val `maven-resolver-transport-http` = "org.apache.maven.resolver:maven-resolver-transport-http:${Versions.mavenArtifactResolver}"
+const val `maven-resolver-provider` = "org.apache.maven:maven-resolver-provider:${Versions.mavenResolverProvider}"

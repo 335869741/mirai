@@ -1,10 +1,10 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
- *  此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- *  Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
  *
- *  https://github.com/mamoe/mirai/blob/master/LICENSE
+ * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 
 @file:Suppress("unused")
@@ -43,6 +43,7 @@ import java.nio.file.Path
 import java.util.*
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.annotation.AnnotationTarget.*
+import kotlin.concurrent.thread
 import kotlin.coroutines.CoroutineContext
 
 
@@ -55,6 +56,7 @@ import kotlin.coroutines.CoroutineContext
 @RequiresOptIn(level = RequiresOptIn.Level.ERROR)
 @Target(CLASS, TYPEALIAS, FUNCTION, PROPERTY, FIELD, CONSTRUCTOR)
 @MustBeDocumented
+@ConsoleFrontEndImplementation
 public annotation class ConsoleFrontEndImplementation
 
 /**
@@ -66,6 +68,16 @@ public annotation class ConsoleFrontEndImplementation
  */
 @ConsoleFrontEndImplementation
 public interface MiraiConsoleImplementation : CoroutineScope {
+    /**
+     * 获取原始 [MiraiConsoleImplementation] 实例.
+     *
+     * [MiraiConsoleImplementation.start] 实际上会创建 [MiraiConsoleImplementationBridge] 并启动该 bridge, 不会直接使用提供的 [MiraiConsoleImplementation] 实例.
+     * [MiraiConsoleImplementation.getInstance] 获取到的将会是 bridge. 可通过 `bridge.origin` 获取原始在 [start] 传递的实例.
+     *
+     * @since 2.11.0-RC
+     */
+    public val origin: MiraiConsoleImplementation get() = this
+
     /**
      * [MiraiConsole] 的 [CoroutineScope.coroutineContext], 必须拥有如下元素
      *
@@ -350,46 +362,59 @@ public interface MiraiConsoleImplementation : CoroutineScope {
     public val consoleLaunchOptions: ConsoleLaunchOptions
         get() = ConsoleLaunchOptions()
 
+    @ConsoleFrontEndImplementation
     public companion object {
         private val backendAccessInstance = object : BackendAccess {
             override val globalComponentStorage: ComponentStorage get() = GlobalComponentStorage
             override val resolvedPlugins: MutableList<Plugin> get() = MiraiConsole.pluginManagerImpl.resolvedPlugins
         }
 
-        @Volatile
-        internal var instance: MiraiConsoleImplementation? = null
-        internal val instanceInitialized: Boolean get() = instance != null
+        init {
+            Runtime.getRuntime().addShutdownHook(thread(false) {
+                if (instanceInitialized) {
+                    runBlocking { MiraiConsole.job.cancelAndJoin() }
+                }
+            })
+        }
 
-        @JvmSynthetic
-        internal var options: ConsoleLaunchOptions = ConsoleLaunchOptions()
+        @Volatile
+        internal var currentBridge: MiraiConsoleImplementationBridge? = null
+        internal val instanceInitialized: Boolean get() = currentBridge != null
 
         private val initLock = ReentrantLock()
 
         /**
-         * 可由前端调用, 获取当前的 [MiraiConsoleImplementation] 实例
+         * 可由前端调用, 获取当前的 [MiraiConsoleImplementation] 实例. 注意该实例不是 [start] 时传递的实例, 而会是 [MiraiConsoleImplementationBridge].
          *
-         * 必须在 [start] 之后才能使用, 否则抛出 [UninitializedPropertyAccessException]
+         * 必须在 [start] 之后才能使用, 否则抛出 [UninitializedPropertyAccessException].
          */
         @JvmStatic
         @ConsoleFrontEndImplementation
-        public fun getInstance(): MiraiConsoleImplementation = instance ?: throw UninitializedPropertyAccessException()
+        public fun getInstance(): MiraiConsoleImplementation =
+            currentBridge ?: throw UninitializedPropertyAccessException()
+
+        /**
+         * @since 2.11
+         */
+        internal fun getBridge(): MiraiConsoleImplementationBridge =
+            currentBridge ?: throw UninitializedPropertyAccessException()
 
         /** 由前端调用, 初始化 [MiraiConsole] 实例并启动 */
         @JvmStatic
         @ConsoleFrontEndImplementation
         @Throws(MalformedMiraiConsoleImplementationError::class)
         public fun MiraiConsoleImplementation.start(): Unit = initLock.withLock {
-            val instance = instance
-            if (instance != null && instance.isActive) {
+            val currentBridge = currentBridge
+            if (currentBridge != null && currentBridge.isActive) {
                 error(
                     "Mirai Console is already initialized and is currently running. " +
                             "Run MiraiConsole.cancel to kill old instance before starting another instance."
                 )
             }
-            options = this.consoleLaunchOptions
-            this@Companion.instance = this
+            val newBridge = MiraiConsoleImplementationBridge(this)
+            this@Companion.currentBridge = newBridge
             kotlin.runCatching {
-                MiraiConsoleImplementationBridge.doStart()
+                newBridge.doStart()
             }.onFailure { e ->
                 kotlin.runCatching {
                     MiraiConsole.mainLogger.error("Failed to init MiraiConsole.", e)

@@ -1,10 +1,10 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
- *  此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- *  Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
  *
- *  https://github.com/mamoe/mirai/blob/master/LICENSE
+ * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 
 package net.mamoe.mirai.console.command
@@ -14,6 +14,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.console.MiraiConsole
+import net.mamoe.mirai.console.MiraiConsoleImplementation
 import net.mamoe.mirai.console.command.CommandManager.INSTANCE.allRegisteredCommands
 import net.mamoe.mirai.console.command.CommandManager.INSTANCE.register
 import net.mamoe.mirai.console.command.descriptor.CommandArgumentParserException
@@ -23,7 +24,6 @@ import net.mamoe.mirai.console.command.descriptor.PermitteeIdValueArgumentParser
 import net.mamoe.mirai.console.command.descriptor.buildCommandArgumentContext
 import net.mamoe.mirai.console.extensions.PermissionServiceProvider
 import net.mamoe.mirai.console.internal.MiraiConsoleBuildConstants
-import net.mamoe.mirai.console.internal.MiraiConsoleImplementationBridge
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.*
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.PasswordKind.MD5
@@ -53,7 +53,6 @@ import java.lang.management.ManagementFactory
 import java.lang.management.MemoryUsage
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
-import kotlin.concurrent.thread
 import kotlin.math.floor
 import kotlin.system.exitProcess
 
@@ -116,12 +115,6 @@ public object BuiltInCommands {
         public suspend fun CommandSender.handle() {
             sendMessage(generateDefaultHelp(this.permitteeId))
         }
-    }
-
-    init {
-        Runtime.getRuntime().addShutdownHook(thread(false) {
-            MiraiConsole.cancel()
-        })
     }
 
     public object StopCommand : SimpleCommand(
@@ -485,7 +478,7 @@ public object BuiltInCommands {
                 gold().append(MiraiConsoleBuildConstants.versionConst)
                 reset().append(", built on ")
                 lightBlue().append(buildDateFormatted).reset().append(".\n")
-                append(MiraiConsoleImplementationBridge.frontEndDescription.render()).append("\n\n")
+                append(MiraiConsoleImplementation.getInstance().frontEndDescription.render()).append("\n\n")
                 append("Permission Service: ").append(
                     if (PermissionService.INSTANCE is BuiltInPermissionService) {
                         lightYellow()

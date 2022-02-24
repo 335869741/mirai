@@ -30,6 +30,14 @@ kotlin {
     explicitApiWarning()
 }
 
+
+// 搜索 mirai-console (包括 core) 直接使用并对外公开的类 (api)
+configurations.create("consoleRuntimeClasspath").attributes {
+    attribute(Usage.USAGE_ATTRIBUTE,
+        project.objects.named(Usage::class.java, Usage.JAVA_API)
+    )
+}
+
 dependencies {
     compileAndTestRuntime(project(":mirai-core-api"))
     compileAndTestRuntime(project(":mirai-core-utils"))
@@ -46,10 +54,20 @@ dependencies {
     smartImplementation(`yamlkt-jvm`)
     smartImplementation(`jetbrains-annotations`)
     smartImplementation(`caller-finder`)
+    smartImplementation(`maven-resolver-api`)
+    smartImplementation(`maven-resolver-provider`)
+    smartImplementation(`maven-resolver-impl`)
+    smartImplementation(`maven-resolver-connector-basic`)
+    smartImplementation(`maven-resolver-transport-http`)
     smartApi(`kotlinx-coroutines-jdk8`)
 
     testApi(project(":mirai-core"))
     testApi(`kotlin-stdlib-jdk8`)
+
+    "consoleRuntimeClasspath"(project)
+    "consoleRuntimeClasspath"(project(":mirai-core-utils"))
+    "consoleRuntimeClasspath"(project(":mirai-core-api"))
+    "consoleRuntimeClasspath"(project(":mirai-core"))
 }
 
 tasks {
@@ -68,6 +86,22 @@ tasks {
 
     afterEvaluate {
         getByName("compileKotlin").dependsOn(task)
+    }
+}
+
+tasks.getByName("compileKotlin").dependsOn(
+    DependencyDumper.registerDumpTaskKtSrc(
+        project,
+        "consoleRuntimeClasspath",
+        project.file("src/internal/MiraiConsoleBuildDependencies.kt"),
+        "net.mamoe.mirai.console.internal.MiraiConsoleBuildDependencies"
+    )
+)
+
+val graphDump = DependencyDumper.registerDumpClassGraph(project, "consoleRuntimeClasspath", "allclasses.txt")
+tasks.named<Copy>("processResources").configure {
+    from(graphDump) {
+        into("META-INF/mirai-console")
     }
 }
 
