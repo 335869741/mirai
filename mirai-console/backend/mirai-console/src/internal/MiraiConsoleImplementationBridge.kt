@@ -19,20 +19,26 @@ import net.mamoe.mirai.Bot
 import net.mamoe.mirai.console.MalformedMiraiConsoleImplementationError
 import net.mamoe.mirai.console.MiraiConsole
 import net.mamoe.mirai.console.MiraiConsoleImplementation
+import net.mamoe.mirai.console.MiraiConsoleImplementation.ConsoleDataScope.Companion.get
 import net.mamoe.mirai.console.command.BuiltInCommands
 import net.mamoe.mirai.console.command.CommandManager
 import net.mamoe.mirai.console.command.ConsoleCommandSender
+import net.mamoe.mirai.console.command.descriptor.ExperimentalCommandDescriptors
+import net.mamoe.mirai.console.command.parse.SpaceSeparatedCommandCallParser
+import net.mamoe.mirai.console.command.resolve.BuiltInCommandCallResolver
+import net.mamoe.mirai.console.extensions.CommandCallParserProvider
+import net.mamoe.mirai.console.extensions.CommandCallResolverProvider
 import net.mamoe.mirai.console.extensions.PermissionServiceProvider
 import net.mamoe.mirai.console.extensions.PostStartupExtension
-import net.mamoe.mirai.console.extensions.SingletonExtensionSelector
 import net.mamoe.mirai.console.internal.command.CommandConfig
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.ConfigurationKey
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.PasswordKind.MD5
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.PasswordKind.PLAIN
-import net.mamoe.mirai.console.internal.data.builtins.LoggerConfig
+import net.mamoe.mirai.console.internal.data.builtins.DataScope
+import net.mamoe.mirai.console.internal.data.builtins.PluginDependenciesConfig
 import net.mamoe.mirai.console.internal.extension.GlobalComponentStorage
-import net.mamoe.mirai.console.internal.extension.SingletonExtensionSelectorImpl
+import net.mamoe.mirai.console.internal.extension.GlobalComponentStorageImpl
 import net.mamoe.mirai.console.internal.logging.LoggerControllerImpl
 import net.mamoe.mirai.console.internal.logging.MiraiConsoleLogger
 import net.mamoe.mirai.console.internal.permission.BuiltInPermissionService
@@ -77,6 +83,13 @@ internal class MiraiConsoleImplementationBridge(
     override val version: SemVersion by MiraiConsoleBuildConstants::version
     override val pluginManager: PluginManagerImpl by lazy { PluginManagerImpl(coroutineContext) }
 
+    // used internally
+    val globalComponentStorage: GlobalComponentStorageImpl by lazy { GlobalComponentStorageImpl() }
+
+    // tentative workaround for https://github.com/mamoe/mirai/pull/1889#pullrequestreview-887903183
+    @Volatile
+    var permissionSeviceLoaded: Boolean = false
+
     override val mainLogger: MiraiLogger by lazy { createLogger("main") }
 
     init {
@@ -99,11 +112,12 @@ internal class MiraiConsoleImplementationBridge(
     internal fun doStart() {
         externalImplementation.preStart()
 
-        phase("setup logger controller") {
-            if (loggerController === LoggerControllerImpl) {
-                // Reload LoggerConfig.
-                consoleDataScope.addAndReloadConfig(LoggerConfig)
-                LoggerControllerImpl.initialized = true
+        @OptIn(ExperimentalCommandDescriptors::class)
+        phase("register builtin componenets") {
+            GlobalComponentStorage.run {
+                contributeConsole(CommandCallParserProvider, SpaceSeparatedCommandCallParser.Provider)
+                contributeConsole(CommandCallResolverProvider, BuiltInCommandCallResolver.Provider)
+                contributeConsole(PermissionServiceProvider, BuiltInPermissionService.Provider())
             }
         }
 
@@ -136,7 +150,13 @@ internal class MiraiConsoleImplementationBridge(
 
         phase("load configurations") {
             mainLogger.verbose { "Loading configurations..." }
-            consoleDataScope.addAndReloadConfig(CommandConfig)
+            consoleDataScope.addAndReloadConfig(AutoLoginConfig())
+            consoleDataScope.addAndReloadConfig(CommandConfig())
+            consoleDataScope.addAndReloadConfig(PluginDependenciesConfig())
+            val loggerController = loggerController
+            if (loggerController is LoggerControllerImpl) {
+                consoleDataScope.addAndReloadConfig(loggerController.loggerConfig)
+            }
             consoleDataScope.reloadAll()
         }
 
@@ -159,25 +179,31 @@ internal class MiraiConsoleImplementationBridge(
             mainLogger.verbose { "${PluginManager.plugins.size} plugin(s) loaded." }
         }
 
-        phase("load SingletonExtensionSelector") {
-            SingletonExtensionSelector.init()
-            val instance = SingletonExtensionSelector.instance
-            if (instance is SingletonExtensionSelectorImpl) {
-                consoleDataScope.addAndReloadConfig(instance.config)
-            }
-        }
+//        phase("load SingletonExtensionSelector") {
+//            SingletonExtensionSelector.init()
+//            val instance = SingletonExtensionSelector.instance
+//            if (instance is SingletonExtensionSelectorImpl) {
+//                consoleDataScope.addAndReloadConfig(instance.config)
+//            }
+//        }
 
 
         phase("load PermissionService") {
             mainLogger.verbose { "Loading PermissionService..." }
 
-            PermissionServiceProvider.permissionServiceOk = true
+            permissionSeviceLoaded = true
             PermissionService.INSTANCE.let { ps ->
                 if (ps is BuiltInPermissionService) {
                     consoleDataScope.addAndReloadConfig(ps.config)
                     mainLogger.verbose { "Reloaded PermissionService settings." }
                 } else {
-                    mainLogger.info { "Loaded PermissionService from plugin ${PermissionServiceProvider.providerPlugin?.name}" }
+                    mainLogger.info {
+                        "Loaded PermissionService from plugin ${
+                            GlobalComponentStorage.getPreferredExtension(
+                                PermissionServiceProvider
+                            ).plugin?.name
+                        }"
+                    }
                 }
             }
 
@@ -206,7 +232,8 @@ internal class MiraiConsoleImplementationBridge(
 
         phase("auto-login bots") {
             runBlocking {
-                val accounts = AutoLoginConfig.accounts.toList()
+                val config = DataScope.get<AutoLoginConfig>()
+                val accounts = config.accounts.toList()
                 for (account in accounts.filter {
                     it.configuration[ConfigurationKey.enable]?.toString()?.equals("true", true) ?: true
                 }) {
@@ -225,6 +252,16 @@ internal class MiraiConsoleImplementationBridge(
                             }.getOrElse {
                                 throw IllegalArgumentException(
                                     "Bad auto-login config value for `protocol` for account $id",
+                                    it
+                                )
+                            }
+                        }
+                        account.configuration[ConfigurationKey.heartbeatStrategy]?.let { heartStrate ->
+                            this.heartbeatStrategy = runCatching {
+                                BotConfiguration.HeartbeatStrategy.valueOf(heartStrate.toString())
+                            }.getOrElse {
+                                throw IllegalArgumentException(
+                                    "Bad auto-login config value for `heartbeatStrategy` for account $id",
                                     it
                                 )
                             }
@@ -258,9 +295,7 @@ internal class MiraiConsoleImplementationBridge(
         }
 
         phase("finally post") {
-            GlobalComponentStorage.run {
-                PostStartupExtension.useExtensions { it() } // exceptions thrown will be caught by caller of `doStart`.
-            }
+            globalComponentStorage.useEachExtensions(PostStartupExtension) { it.invoke() }
         }
 
         externalImplementation.postStart()

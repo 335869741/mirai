@@ -1,10 +1,10 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
- *  此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- *  Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
  *
- *  https://github.com/mamoe/mirai/blob/master/LICENSE
+ * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 
 @file:Suppress("EXPOSED_SUPER_CLASS")
@@ -21,13 +21,12 @@ import net.mamoe.mirai.console.data.ValueDescription
 import net.mamoe.mirai.console.data.value
 import net.mamoe.mirai.console.util.ConsoleExperimentalApi
 import net.mamoe.mirai.utils.SecretsProtection
-import net.mamoe.mirai.utils.readString
 import net.mamoe.yamlkt.Comment
 import net.mamoe.yamlkt.YamlDynamicSerializer
 
 @ConsoleExperimentalApi
 @ValueDescription("自动登录配置")
-public object AutoLoginConfig : AutoSavePluginConfig("AutoLogin") {
+public class AutoLoginConfig : AutoSavePluginConfig("AutoLogin") {
 
     @Serializable
     public data class Account(
@@ -40,6 +39,7 @@ public object AutoLoginConfig : AutoSavePluginConfig("AutoLogin") {
             "protocol": "ANDROID_PHONE" / "ANDROID_PAD" / "ANDROID_WATCH" /"MAC" / "IPAD"
             "device": "device.json" 
             "enable": true
+            "heartbeatStrategy": "STAT_HB" / "REGISTER" / "NONE"
         """
         )
         val configuration: Map<ConfigurationKey, @Serializable(with = YamlDynamicSerializer::class) Any> = mapOf(),
@@ -70,6 +70,7 @@ public object AutoLoginConfig : AutoSavePluginConfig("AutoLogin") {
             protocol,
             device,
             enable,
+            heartbeatStrategy,
 
             ;
 
@@ -107,7 +108,8 @@ public object AutoLoginConfig : AutoSavePluginConfig("AutoLogin") {
                 configuration = mapOf(
                     Account.ConfigurationKey.protocol to "ANDROID_PHONE",
                     Account.ConfigurationKey.device to "device.json",
-                    Account.ConfigurationKey.enable to true
+                    Account.ConfigurationKey.enable to true,
+                    Account.ConfigurationKey.heartbeatStrategy to "STAT_HB"
                 )
             )
         )
