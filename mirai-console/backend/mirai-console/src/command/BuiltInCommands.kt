@@ -9,7 +9,10 @@
 
 package net.mamoe.mirai.console.command
 
-import kotlinx.coroutines.*
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import net.mamoe.mirai.Bot
@@ -25,18 +28,18 @@ import net.mamoe.mirai.console.command.descriptor.PermitteeIdValueArgumentParser
 import net.mamoe.mirai.console.command.descriptor.buildCommandArgumentContext
 import net.mamoe.mirai.console.extensions.PermissionServiceProvider
 import net.mamoe.mirai.console.internal.MiraiConsoleBuildConstants
+import net.mamoe.mirai.console.internal.command.builtin.LoginCommandImpl
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.*
-import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.PasswordKind.MD5
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.PasswordKind.PLAIN
 import net.mamoe.mirai.console.internal.data.builtins.DataScope
 import net.mamoe.mirai.console.internal.extension.GlobalComponentStorage
 import net.mamoe.mirai.console.internal.permission.BuiltInPermissionService
+import net.mamoe.mirai.console.internal.permission.getPermittedPermissionsAndSource
 import net.mamoe.mirai.console.internal.pluginManagerImpl
-import net.mamoe.mirai.console.internal.util.autoHexToBytes
 import net.mamoe.mirai.console.internal.util.runIgnoreException
 import net.mamoe.mirai.console.permission.Permission
-import net.mamoe.mirai.console.permission.Permission.Companion.parentsWithSelf
+import net.mamoe.mirai.console.permission.PermissionId
 import net.mamoe.mirai.console.permission.PermissionService
 import net.mamoe.mirai.console.permission.PermissionService.Companion.cancel
 import net.mamoe.mirai.console.permission.PermissionService.Companion.findCorrespondingPermissionOrFail
@@ -46,12 +49,13 @@ import net.mamoe.mirai.console.permission.PermissionService.Companion.permit
 import net.mamoe.mirai.console.permission.PermitteeId
 import net.mamoe.mirai.console.plugin.name
 import net.mamoe.mirai.console.plugin.version
-import net.mamoe.mirai.console.util.*
+import net.mamoe.mirai.console.util.AnsiMessageBuilder
+import net.mamoe.mirai.console.util.ConsoleExperimentalApi
+import net.mamoe.mirai.console.util.ConsoleInternalApi
+import net.mamoe.mirai.console.util.sendAnsiMessage
 import net.mamoe.mirai.event.events.EventCancelledException
-import net.mamoe.mirai.message.nextMessageOrNull
 import net.mamoe.mirai.utils.BotConfiguration
 import net.mamoe.mirai.utils.MiraiLogger
-import net.mamoe.mirai.utils.secondsToMillis
 import java.lang.management.ManagementFactory
 import java.lang.management.MemoryUsage
 import java.time.ZoneId
@@ -184,13 +188,12 @@ public object BuiltInCommands {
         }
     }
 
+    private val loginCommandInstance = LoginCommandImpl()
+
     public object LoginCommand : SimpleCommand(
-        ConsoleCommandOwner, "login", "登录",
-        description = "登录一个账号",
+        ConsoleCommandOwner, loginCommandInstance.primaryName, * loginCommandInstance.secondaryNames,
+        description = loginCommandInstance.description,
     ), BuiltInCommandInternal {
-        private suspend fun Bot.doLogin() = kotlin.runCatching {
-            login(); this
-        }.onFailure { close() }.getOrThrow()
 
         @Handler
         @JvmOverloads
@@ -199,45 +202,9 @@ public object BuiltInCommands {
             password: String? = null,
             protocol: BotConfiguration.MiraiProtocol? = null,
         ) {
-            fun BotConfiguration.setup(protocol: BotConfiguration.MiraiProtocol?): BotConfiguration {
-                if (protocol != null) this.protocol = protocol
-                return this
+            loginCommandInstance.run {
+                handle(id, password, protocol)
             }
-
-            suspend fun getPassword(id: Long): Any? {
-                val config = DataScope.get<AutoLoginConfig>()
-                val acc = config.accounts.firstOrNull { it.account == id.toString() }
-                if (acc == null) {
-                    sendMessage("Could not find '$id' in AutoLogin config. Please specify password.")
-                    return null
-                }
-                val strv = acc.password.value
-                return if (acc.password.kind == MD5) strv.autoHexToBytes() else strv
-            }
-
-            val pwd: Any = password ?: getPassword(id) ?: return
-            kotlin.runCatching {
-                when (pwd) {
-                    is String -> MiraiConsole.addBot(id, pwd) { setup(protocol) }.doLogin()
-                    is ByteArray -> MiraiConsole.addBot(id, pwd) { setup(protocol) }.doLogin()
-                    else -> throw AssertionError("Assertion failed, please report to https://github.com/mamoe/mirai-console/issues/new/choose, debug=${pwd.javaClass}")// Unreachable
-                }
-            }.fold(
-                onSuccess = { scopeWith(ConsoleCommandSender).sendMessage("${it.nick} ($id) Login successful") },
-                onFailure = { throwable ->
-                    scopeWith(ConsoleCommandSender).sendMessage(
-                        "Login failed: ${throwable.localizedMessage ?: throwable.message ?: throwable.toString()}" +
-                                if (this is CommandSenderOnMessage<*>) {
-                                    MiraiConsole.launch(CoroutineName("stacktrace delayer from Login")) {
-                                        fromEvent.nextMessageOrNull(60.secondsToMillis) { it.message.contentEquals("stacktrace") }
-                                    }
-                                    "\n 1 分钟内发送 stacktrace 以获取堆栈信息"
-                                } else ""
-                    )
-
-                    throw throwable
-                }
-            )
         }
     }
 
@@ -254,6 +221,35 @@ public object BuiltInCommands {
         },
     ), BuiltInCommandInternal {
         // TODO: 2020/9/10 improve Permission command
+
+        /* 用于解析权限继承关系 */
+        private class PermTree(
+            val perm: Permission,
+            val sub: MutableList<PermissionId> = mutableListOf(),
+            var linked: Boolean = false,
+            var implicit: Boolean = false,
+            val source: MutableList<PermitteeId> = mutableListOf(),
+        ) {
+            companion object {
+                fun sortView(view: PermTree) {
+                    view.sub.sortWith { p1, p2 ->
+                        val namespaceCompare = p1.namespace compareTo p2.namespace
+                        if (namespaceCompare != 0) return@sortWith namespaceCompare
+
+                        if (p1.name == p2.name) return@sortWith 0 // ?
+                        if (p1.name == "*") return@sortWith -1
+                        if (p2.name == "*") return@sortWith 1
+
+                        return@sortWith p1.name compareTo p2.name
+                    }
+                }
+            }
+        }
+
+        private fun renderDepth(depth: Int, sb: AnsiMessageBuilder) {
+            repeat(depth) { sb.append(" | ") }
+        }
+
 
         @Description("授权一个权限")
         @SubCommand("permit", "grant", "add")
@@ -289,27 +285,150 @@ public object BuiltInCommands {
         @SubCommand("permittedPermissions", "pp", "grantedPermissions", "gp")
         public suspend fun CommandSender.permittedPermissions(
             @Name("被许可人 ID") target: PermitteeId,
-            @Name("包括重复") all: Boolean = false,
+            @Name("显示全部") all: Boolean = true,
         ) {
-            var grantedPermissions = target.getPermittedPermissions().toList()
-            if (!all) {
-                grantedPermissions = grantedPermissions.filter { thisPerm ->
-                    grantedPermissions.none { other -> thisPerm.parentsWithSelf.drop(1).any { it == other } }
-                }
-            }
+            val grantedPermissions = target.getPermittedPermissionsAndSource().toList()
             if (grantedPermissions.isEmpty()) {
                 sendMessage("${target.asString()} 未被授予任何权限. 使用 `${CommandManager.commandPrefix}permission grant` 给予权限.")
+            } else if (all) {
+                val allPermissions = PermissionService.INSTANCE.getRegisteredPermissions().toList()
+                val permMapping = mutableMapOf<PermissionId, PermTree>()
+                grantedPermissions.forEach { (source, granted) ->
+                    val m = permMapping[granted.id] ?: kotlin.run {
+                        PermTree(granted).also { it.implicit = false; permMapping[granted.id] = it }
+                    }
+                    m.source.add(source)
+                }
+                val root = PermissionService.INSTANCE.rootPermission
+                fun linkPmTree(permTree: PermTree) {
+                    allPermissions.forEach { perm ->
+                        if (perm.id == root.id) return@forEach
+                        if (perm.parent.id == permTree.perm.id) {
+                            permTree.sub.add(perm.id)
+                            val subp = permMapping[perm.id] ?: kotlin.run {
+                                val p = PermTree(perm)
+                                p.implicit = true
+                                permMapping[perm.id] = p
+                                linkPmTree(p)
+                                p
+                            }
+                            subp.linked = true
+                        }
+                    }
+                }
+                permMapping.values.toList().forEach { linkPmTree(it) }
+                permMapping.values.forEach { PermTree.sortView(it) }
+
+                @Suppress("LocalVariableName")
+                val BG_BLACK = "\u001B[40m"
+                fun render(depth: Int, view: PermTree, sb: AnsiMessageBuilder) {
+                    if (view.implicit) {
+                        sb.gray()
+                        sb.append(view.perm.id)
+                        sb.append(" (implicit)\n")
+                        sb.reset().white().ansi(BG_BLACK)
+                    } else {
+                        sb.append(view.perm.id)
+                        if (view.source.isNotEmpty()) {
+                            sb.append(' ').gray().append('(')
+                            sb.append("from ")
+                            view.source.joinTo(sb)
+                            sb.append(')').reset().white().ansi(BG_BLACK)
+                        }
+                        sb.append('\n')
+                    }
+                    view.sub.forEach { sub ->
+                        val subView = permMapping[sub] ?: error("Error in resolving $sub")
+                        renderDepth(depth, sb)
+                        sb.append(" |- ")
+                        render(depth + 1, subView, sb)
+                    }
+                }
+                sendAnsiMessage {
+                    ansi(BG_BLACK).white()
+                    permMapping.forEach { (pid, tree) ->
+                        if (!tree.linked) {
+                            render(0, tree, this)
+                        }
+                    }
+                }
             } else {
-                sendMessage(grantedPermissions.joinToString("\n") { it.id.toString() })
+                sendMessage(grantedPermissions.map { it.second.id }.toSet().joinToString("\n"))
             }
         }
 
         @Description("查看所有权限列表")
         @SubCommand("listPermissions", "lp")
         public suspend fun CommandSender.listPermissions() {
-            sendMessage(
-                PermissionService.INSTANCE.getRegisteredPermissions()
-                    .joinToString("\n") { it.id.toString() + "    " + it.description })
+
+            val rootView = PermTree(PermissionService.INSTANCE.rootPermission)
+            val mappings = mutableMapOf<PermissionId, PermTree>()
+            val permListSnapshot = PermissionService.INSTANCE.getRegisteredPermissions().toList()
+
+            permListSnapshot.forEach { perm ->
+                mappings[perm.id] = PermTree(perm)
+            }
+            mappings[rootView.perm.id] = rootView
+
+            permListSnapshot.forEach { perm ->
+                if (perm.id == rootView.perm.id) return@forEach
+
+                val parentView = mappings[perm.parent.id] ?: error("Can't find parent of ${perm.id}: ${perm.parent.id}")
+                parentView.sub.add(perm.id)
+            }
+
+            mappings.values.forEach { PermTree.sortView(it) }
+
+            //*:*
+            // |  `-
+            // |- .....
+            // |  |  `-
+            // |  |- ......
+            // |  |  |  `-
+            // |  |  |-
+            val prefixed = 50
+
+            fun render(depth: Int, view: PermTree, sb: AnsiMessageBuilder) {
+                kotlin.run { // render perm id
+                    var doReset = false
+                    val permId = view.perm.id
+                    if (permId == rootView.perm.id || permId.name.endsWith("*")) {
+                        doReset = true
+                        sb.red()
+                    }
+                    sb.append(permId)
+                    if (doReset) {
+                        sb.reset()
+                    }
+                }
+
+                val linePrefixLen =
+                    (depth * 3) + 1 + view.perm.id.let { it.name.length + it.namespace.length } + (if (depth == 0) 0 else 1)
+                val descFlatten = view.perm.description.replace("\r\n", "\n").replace("\r", "\n")
+                if (!descFlatten.contains('\n') && linePrefixLen < prefixed) {
+                    if (descFlatten.isNotBlank()) {
+                        repeat(prefixed - linePrefixLen) { sb.append(' ') }
+                        sb.append("    ").append(descFlatten)
+                    }
+                } else {
+                    descFlatten.splitToSequence('\n').forEach { line ->
+                        sb.append('\n')
+                        renderDepth(depth, sb)
+                        sb.append(" |  `- ").append(line)
+                    }
+                }
+                sb.append('\n')
+
+                view.sub.forEach { sub ->
+                    val subView = mappings[sub] ?: return@forEach
+                    renderDepth(depth, sb)
+                    sb.append(" |- ")
+                    render(depth + 1, subView, sb)
+                }
+            }
+            sendAnsiMessage {
+                render(0, rootView, this)
+            }
         }
     }
 

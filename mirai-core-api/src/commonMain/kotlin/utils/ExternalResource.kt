@@ -40,22 +40,80 @@ import kotlin.contracts.contract
  *
  * [ExternalResource] 在创建之后就应该保持其属性的不变, 即任何时候获取其属性都应该得到相同结果, 任何时候打开流都得到的一样的数据.
  *
- * ## 创建
+ * # 创建
  * - [File.toExternalResource]
  * - [RandomAccessFile.toExternalResource]
  * - [ByteArray.toExternalResource]
  * - [InputStream.toExternalResource]
  *
- * ## 释放
+ * ## 在 Kotlin 获得和使用 [ExternalResource] 实例
+ *
+ * ```
+ * file.toExternalResource().use { resource -> // 安全地使用资源
+ *     contact.uploadImage(resource) // 用来上传图片
+ *     contact.files.uploadNewFile("/foo/test.txt", file) // 或者用来上传文件
+ * }
+ * ```
+ *
+ * 注意, 若使用 [InputStream], 必须手动关闭 [InputStream]. 一种使用情况示例:
+ *
+ * ```
+ * inputStream.use { input -> // 安全地使用 InputStream
+ *     input.toExternalResource().use { resource -> // 安全地使用资源
+ *         contact.uploadImage(resource) // 用来上传图片
+ *         contact.files.uploadNewFile("/foo/test.txt", file) // 或者用来上传文件
+ *     }
+ * }
+ * ```
+ *
+ * ## 在 Java 获得和使用 [ExternalResource] 实例
+ *
+ * ```
+ * try (ExternalResource resource = ExternalResource.create(file)) { // 使用文件 file
+ *     contact.uploadImage(resource); // 用来上传图片
+ *     contact.files.uploadNewFile("/foo/test.txt", file); // 或者用来上传文件
+ * }
+ * ```
+ *
+ * 注意, 若使用 [InputStream], 必须手动关闭 [InputStream]. 一种使用情况示例:
+ *
+ * ```java
+ * try (InputStream stream = ...) { // 安全地使用 InputStream
+ *     try (ExternalResource resource = ExternalResource.create(stream)) { // 安全地使用资源
+ *         contact.uploadImage(resource); // 用来上传图片
+ *         contact.files.uploadNewFile("/foo/test.txt", file); // 或者用来上传文件
+ *     }
+ * }
+ * ```
+ *
+ * # 释放
  *
  * 当 [ExternalResource] 创建时就可能会打开一个文件 (如使用 [File.toExternalResource]).
  * 类似于 [InputStream], [ExternalResource] 需要被 [关闭][close].
  *
- * 自 2.7 起, 每个 mirai 内置的 [ExternalResource] 实现都有引用跟踪, 当 [ExternalResource] 被 GC 后会执行被动释放, 但是该策略并不代表不需要手动 close.
+ * ## 未释放资源的补救策略
  *
- * ## 实现 [ExternalResource]
+ * 自 2.7 起, 每个 mirai 内置的 [ExternalResource] 实现都有引用跟踪, 当 [ExternalResource] 被 GC 后会执行被动释放.
+ * 这依赖于 JVM 垃圾收集策略, 因此不可靠, 资源仍然需要手动 close.
+ *
+ * ## 使用单次自动释放
+ *
+ * 若创建的资源仅需要*很快地*使用一次, 可使用 [toAutoCloseable] 获得在使用一次后就会自动关闭的资源.
+ *
+ * 示例:
+ * ```java
+ * contact.uploadImage(ExternalResource.create(file).toAutoCloseable()); // 创建并立即使用单次自动释放的资源
+ * ```
+ *
+ * **注意**: 如果仅使用 [toAutoCloseable] 而不通过 [Contact.uploadImage] 等 mirai 内置方法使用资源, 资源仍然会处于打开状态且不会被自动关闭.
+ * 最终资源会由上述*未释放资源的补救策略*关闭, 但这依赖于 JVM 垃圾收集策略而不可靠.
+ * 因此建议在创建单次自动释放的资源后就尽快使用它, 否则仍然需要考虑在正确的时间及时关闭资源.
+ *
+ * # 实现 [ExternalResource]
  *
  * 可以自行实现 [ExternalResource]. 但通常上述创建方法已足够使用.
+ *
+ * 建议继承 [AbstractExternalResource], 这将支持上文提到的资源自动释放功能.
  *
  * 实现时需保持 [ExternalResource] 在构造后就不可变, 并且所有属性都总是返回一个固定值.
  *
@@ -153,6 +211,25 @@ public interface ExternalResource : Closeable {
      */
     public val origin: Any? get() = null
 
+    /**
+     * 创建一个在 _使用一次_ 后就会自动 [close] 的 [ExternalResource].
+     *
+     * @since 2.8.0
+     */
+    public fun toAutoCloseable(): ExternalResource {
+        return if (isAutoClose) this else {
+            val delegate = this
+            object : ExternalResource by delegate {
+                override val isAutoClose: Boolean get() = true
+                override fun toString(): String = "ExternalResourceWithAutoClose(delegate=$delegate)"
+                override fun toAutoCloseable(): ExternalResource {
+                    return this
+                }
+            }
+        }
+    }
+
+
     public companion object {
         /**
          * 在无法识别文件格式时使用的默认格式名. "mirai".
@@ -167,6 +244,7 @@ public interface ExternalResource : Closeable {
 
         /**
          * **打开文件**并创建 [ExternalResource].
+         * 注意, 返回的 [ExternalResource] 需要在使用完毕后调用 [ExternalResource.close] 关闭.
          *
          * 将以只读模式打开这个文件 (因此文件会处于被占用状态), 直到 [ExternalResource.close].
          *
@@ -183,8 +261,9 @@ public interface ExternalResource : Closeable {
 
         /**
          * 创建 [ExternalResource].
+         * 注意, 返回的 [ExternalResource] 需要在使用完毕后调用 [ExternalResource.close] 关闭, 届时将会关闭 [RandomAccessFile].
          *
-         * **注意**：使用此方法时请不要关闭 [RandomAccessFile], 否则会间接关闭 [ExternalResource]
+         * **注意**：若关闭 [RandomAccessFile], 也会间接关闭 [ExternalResource].
          *
          * @see closeOriginalFileOnClose 若为 `true`, 在 [ExternalResource.close] 时将会同步关闭 [RandomAccessFile]. 否则不会.
          *
@@ -200,7 +279,7 @@ public interface ExternalResource : Closeable {
             ExternalResourceImplByFile(this, formatName, closeOriginalFileOnClose)
 
         /**
-         * 创建 [ExternalResource].
+         * 创建 [ExternalResource]. 注意, 返回的 [ExternalResource] 需要在使用完毕后调用 [ExternalResource.close] 关闭.
          *
          * @param formatName 查看 [ExternalResource.formatName]
          */
@@ -213,10 +292,33 @@ public interface ExternalResource : Closeable {
 
         /**
          * 立即使用 [FileCacheStrategy] 缓存 [InputStream] 并创建 [ExternalResource].
+         * 返回的 [ExternalResource] 需要在使用完毕后调用 [ExternalResource.close] 关闭.
          *
          * **注意**：本函数不会关闭流.
          *
+         * ### 在 Java 获得和使用 [ExternalResource] 实例
+         *
+         * ```
+         * try(ExternalResource resource = ExternalResource.create(file)) { // 使用文件 file
+         *     contact.uploadImage(resource); // 用来上传图片
+         *     contact.files.uploadNewFile("/foo/test.txt", file); // 或者用来上传文件
+         * }
+         * ```
+         *
+         * 注意, 若使用 [InputStream], 必须手动关闭 [InputStream]. 一种使用情况示例:
+         *
+         * ```
+         * try(InputStream stream = ...) {
+         *     try(ExternalResource resource = ExternalResource.create(stream)) {
+         *         contact.uploadImage(resource); // 用来上传图片
+         *         contact.files.uploadNewFile("/foo/test.txt", file); // 或者用来上传文件
+         *     }
+         * }
+         * ```
+         *
+         *
          * @param formatName 查看 [ExternalResource.formatName]
+         * @see ExternalResource
          */
         @JvmStatic
         @JvmOverloads
@@ -507,33 +609,6 @@ public interface ExternalResource : Closeable {
         }
         // endregion
     }
-
-    ///////////////////////////////////////////////////////////////////////////
-    // region Java Friendly Functions
-    ///////////////////////////////////////////////////////////////////////////
-
-    /**
-     * 创建一个在 _使用一次_ 后就会自动 [close] 的 [ExternalResource].
-     *
-     * @since 2.8.0
-     */
-    public fun toAutoCloseable(): ExternalResource {
-        return if (isAutoClose) this else {
-            val delegate = this
-            object : ExternalResource by delegate {
-                override val isAutoClose: Boolean get() = true
-                override fun toString(): String = "ExternalResourceWithAutoClose(delegate=$delegate)"
-                override fun toAutoCloseable(): ExternalResource {
-                    return this
-                }
-            }
-        }
-    }
-
-    ///////////////////////////////////////////////////////////////////////////
-    // endregion
-    ///////////////////////////////////////////////////////////////////////////
-
 }
 
 /**
