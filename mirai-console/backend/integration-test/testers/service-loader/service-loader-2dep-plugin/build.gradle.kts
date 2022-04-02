@@ -23,4 +23,5 @@ kotlin {
 
 dependencies {
     api(project(":mirai-console.integration-test"))
+    api(parent!!.project("module-service-loader-typedef"))
 }

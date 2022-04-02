@@ -6,21 +6,9 @@
  *
  * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
+package net.mamoe.console.integrationtest.mod.serviceimpl
 
-@file:Suppress("UnusedImport")
+import net.mamoe.console.integrationtest.mod.servicetypedef.ServiceTypedef
 
-plugins {
-    kotlin("jvm")
-    kotlin("plugin.serialization")
-    id("java")
-}
-
-version = "0.0.0"
-
-kotlin {
-    explicitApiWarning()
-}
-
-dependencies {
-    api(project(":mirai-console.integration-test"))
+public class ServiceImpl : ServiceTypedef {
 }
