@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -104,6 +104,40 @@ internal class DynLibClassLoader(
         }
     }
 
+    internal fun findButNoSystem(name: String): Class<*>? {
+        val pt = this.parent
+        if (pt is DynLibClassLoader) {
+            pt.findButNoSystem(name)?.let { return it }
+        }
+        synchronized(getClassLoadingLock(name)) {
+            findLoadedClass(name)?.let { return it }
+            try {
+                findClass(name)?.let { return it }
+            } catch (ignored: ClassNotFoundException) {
+            }
+        }
+        return null
+    }
+
+    override fun loadClass(name: String, resolve: Boolean): Class<*> {
+        if (name.startsWith("java.")) return Class.forName(name, false, null)
+        val pt = this.parent
+        val topPt: ClassLoader? = if (pt is DynLibClassLoader) {
+            pt.findButNoSystem(name)?.let { return it }
+
+            generateSequence<ClassLoader>(pt) { it.parent }.firstOrNull { it !is DynLibClassLoader }
+        } else pt
+
+
+        synchronized(getClassLoadingLock(name)) {
+            findLoadedClass(name)?.let { return it }
+            try {
+                return findClass(name)
+            } catch (ignored: ClassNotFoundException) {
+            }
+            return Class.forName(name, false, topPt)
+        }
+    }
 }
 
 @Suppress("JoinDeclarationAndAssignment")
@@ -124,6 +158,7 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
     var linkedLogger by lateinitMutableProperty { MiraiConsole.createLogger("JvmPlugin[" + file_.name + "]") }
     val undefinedDependencies = mutableSetOf<String>()
 
+    @Suppress("UNUSED_PARAMETER")
     private constructor(file: File, ctx: JvmPluginsLoadingCtx, unused: Unit) : super(
         arrayOf(), ctx.sharedLibrariesLoader
     ) {
@@ -133,6 +168,7 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
         init0()
     }
 
+    @Suppress("Since15")
     private constructor(file: File, ctx: JvmPluginsLoadingCtx) : super(
         file.name,
         arrayOf(), ctx.sharedLibrariesLoader
@@ -222,7 +258,7 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
             } else {
                 pluginIndependentCL.addLib(lib)
             }
-            logger.debug { "Linked $artifact $linkType" }
+            logger.debug { "Linked $artifact $linkType <${if (shared) pluginSharedCL else pluginIndependentCL}>" }
         }
     }
 
@@ -267,6 +303,7 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
     override fun loadClass(name: String, resolve: Boolean): Class<*> = loadClass(name)
 
     override fun loadClass(name: String): Class<*> {
+        if (name.startsWith("java.")) return Class.forName(name, false, null)
         if (name.startsWith("io.netty") || name in AllDependenciesClassesHolder.allclasses) {
             return AllDependenciesClassesHolder.appClassLoader.loadClass(name)
         }

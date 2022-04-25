@@ -19,14 +19,14 @@ object Versions {
 
     val core = project
     val console = project
-    val consoleIntellij = "213-$project-160-1" // idea-mirai-kotlin-patch
+    val consoleIntellij = "221-$project-162-1" // idea-mirai-kotlin-patch
     val consoleTerminal = project
 
     const val kotlinCompiler = "1.6.0"
     const val kotlinStdlib = kotlinCompiler
     const val dokka = "1.6.0"
 
-    const val kotlinCompilerForIdeaPlugin = "1.6.20-M1"
+    const val kotlinCompilerForIdeaPlugin = "1.6.20"
 
     const val coroutines = "1.6.0"
     const val atomicFU = "0.17.0"
@@ -48,7 +48,7 @@ object Versions {
 
     const val logback = "1.2.5"
     const val slf4j = "1.7.32"
-    const val log4j = "2.15.0"
+    const val log4j = "2.17.2"
     const val asm = "9.1"
     const val difflib = "1.3.0"
     const val netty = "4.1.63.Final"
@@ -61,10 +61,10 @@ object Versions {
     // If you the versions below, you need to sync changes to mirai-console/buildSrc/src/main/kotlin/Versions.kt
 
     const val yamlkt = "0.10.2"
-    const val intellijGradlePlugin = "1.3.0"
+    const val intellijGradlePlugin = "1.5.3"
 
     //    const val kotlinIntellijPlugin = "211-1.5.20-release-284-IJ7442.40" // keep to newest as kotlinCompiler
-    const val intellij = "2021.3.2" // don't update easily unless you want your disk space -= 500MB
+    const val intellij = "2022.1" // don't update easily unless you want your disk space -= 500MB
 
 }
 

@@ -1,10 +1,10 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
- *  此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- *  Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
  *
- *  https://github.com/mamoe/mirai/blob/master/LICENSE
+ * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 
 @file:JvmMultifileClass
@@ -32,14 +32,15 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinTarget
 public class MiraiConsoleGradlePlugin : Plugin<Project> {
     internal companion object {
         const val MIRAI_SHADOW_CONF_NAME: String = "shadowLink"
+        const val MIRAI_AS_NORMAL_DEP_CONF_NAME: String = "asNormalDep"
     }
 
     private fun KotlinSourceSet.configureSourceSet(project: Project, target: KotlinTarget) {
         try {
-            @Suppress("DEPRECATION") // user may use 1.4
-            languageSettings.useExperimentalAnnotation("kotlin.RequiresOptIn")
-        } catch (e: NoSuchMethodError) {
             languageSettings.optIn("kotlin.RequiresOptIn")
+        } catch (e: NoSuchMethodError) {
+            @Suppress("DEPRECATION")
+            languageSettings.useExperimentalAnnotation("kotlin.RequiresOptIn")
         }
         dependencies { configureDependencies(project, this@configureSourceSet, target) }
     }
@@ -120,8 +121,14 @@ public class MiraiConsoleGradlePlugin : Plugin<Project> {
                 BuildMiraiPluginV2::class.java
             ).also { buildPluginV2 ->
                 buildPluginV2.group = "mirai"
-                buildPluginV2.registerMetadataTask(tasks, "miraiPrepareMetadata".wrapNameWithPlatform(target, isSingleTarget))
+                buildPluginV2.registerMetadataTask(
+                    tasks,
+                    "miraiPrepareMetadata".wrapNameWithPlatform(target, isSingleTarget)
+                )
                 buildPluginV2.init(target)
+                buildPluginV2.destinationDirectory.value(
+                    project.layout.projectDirectory.dir(project.buildDir.name).dir("mirai")
+                )
             }
             tasks.create(
                 "buildPluginLegacy".wrapNameWithPlatform(target, isSingleTarget),
@@ -167,6 +174,7 @@ public class MiraiConsoleGradlePlugin : Plugin<Project> {
 
     private fun Project.setupConfigurations() {
         configurations.create(MIRAI_SHADOW_CONF_NAME).isCanBeResolved = false
+        configurations.create(MIRAI_AS_NORMAL_DEP_CONF_NAME).isCanBeResolved = false
     }
 
     override fun apply(target: Project): Unit = with(target) {

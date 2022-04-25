@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -105,11 +105,18 @@ public interface Group : Contact, CoroutineScope, FileSupported, AudioSupported 
     public val botPermission: MemberPermission get() = botAsMember.permission
 
     /**
-     * 群头像下载链接.
+     * 群头像下载链接, 规格默认为 [AvatarSpec.LARGEST]
+     * @see avatarUrl
      */
     public override val avatarUrl: String
-        get() = "https://p.qlogo.cn/gh/$id/${id}/640"
+        get() = avatarUrl(spec = AvatarSpec.LARGEST)
 
+    /**
+     * 群头像下载链接.
+     * @param spec 头像的规格.
+     * @since 2.11
+     */
+    public override fun avatarUrl(spec: AvatarSpec): String = "http://p.qlogo.cn/gh/${id}/${id}/${spec.size}"
 
     /**
      * 群成员列表, 不含机器人自己, 含群主.
@@ -192,10 +199,10 @@ public interface Group : Contact, CoroutineScope, FileSupported, AudioSupported 
     @Deprecated(
         "use uploadAudio",
         replaceWith = ReplaceWith("uploadAudio(resource)"),
-        level = DeprecationLevel.ERROR
+        level = DeprecationLevel.HIDDEN
     ) // deprecated since 2.7
-    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10")
-    public suspend fun uploadVoice(resource: ExternalResource): Voice
+    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10", hiddenSince = "2.11")
+    public suspend fun uploadVoice(resource: ExternalResource): net.mamoe.mirai.message.data.Voice
 
     /**
      * 将一条消息设置为群精华消息, 需要管理员或群主权限.
@@ -240,10 +247,10 @@ public interface GroupSettings {
      * @see Group.announcements
      */
     @Deprecated(
-        level = DeprecationLevel.ERROR,
+        level = DeprecationLevel.HIDDEN,
         message = "group.announcements.asFlow().filter { it.parameters.sendToNewMember }.firstOrNull()",
     ) // deprecated since 2.7
-    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10")
+    @DeprecatedSinceMirai(warningSince = "2.7", errorSince = "2.10", hiddenSince = "2.11")
     public var entranceAnnouncement: String
 
     /**
