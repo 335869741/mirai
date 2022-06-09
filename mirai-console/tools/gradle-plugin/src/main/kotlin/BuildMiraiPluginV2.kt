@@ -35,6 +35,9 @@ import javax.inject.Inject
 
 @Suppress("RedundantLambdaArrow", "RemoveExplicitTypeArguments")
 public open class BuildMiraiPluginV2 : Jar() {
+    public companion object {
+        public const val FILE_SUFFIX: String = "mirai2.jar"
+    }
 
     // @get:Internal
     private lateinit var metadataTask: GenMetadataTask
@@ -70,6 +73,8 @@ public open class BuildMiraiPluginV2 : Jar() {
             val shadowedDependencies = mutableSetOf<String>()
             val subprojects = mutableSetOf<String>()
             val subprojects_fullpath = mutableSetOf<String>()
+            // val subprojects_unlinked_fullpath = mutableSetOf<String>()
+            val subprojects_linked_fullpath = mutableSetOf<String>()
 
             project.configurations.findByName(MiraiConsoleGradlePlugin.MIRAI_SHADOW_CONF_NAME)?.allDependencies?.forEach { dep ->
                 if (dep is ExternalModuleDependency) {
@@ -77,10 +82,20 @@ public open class BuildMiraiPluginV2 : Jar() {
                     shadowedDependencies.add(artId)
                 }
             }
-            project.configurations.findByName(MiraiConsoleGradlePlugin.MIRAI_AS_NORMAL_DEP_CONF_NAME)?.allDependencies?.forEach { dep ->
-                if (dep is ProjectDependency) {
-                    linkedDependencies.add("${dep.group}:${dep.name}")
+            project.configurations.findByName(MiraiConsoleGradlePlugin.MIRAI_AS_NORMAL_DEP_CONF_NAME)?.allDependencies?.forEach { dep1 ->
+                fun resolve0(dep: Dependency) {
+                    if (dep is ProjectDependency) {
+                        linkedDependencies.add("${dep.group}:${dep.name}")
+                        subprojects_linked_fullpath.add(dep.dependencyProject.path)
+                        dep.dependencyProject.configurations.findByName("apiElements")?.allDependencies?.forEach {
+                            resolve0(it)
+                        }
+                        dep.dependencyProject.configurations.findByName("implementation")?.allDependencies?.forEach {
+                            resolve0(it)
+                        }
+                    }
                 }
+                resolve0(dep1)
             }
 
             fun deepForeachDependencies(conf: Configuration?, action: (Dependency) -> Unit) {
@@ -132,12 +147,21 @@ public open class BuildMiraiPluginV2 : Jar() {
             val runtimeClasspath = project.configurations["runtimeClasspath"].resolvedConfiguration
             fun markAsResolved(resolvedDependency: ResolvedDependency) {
                 val depId = resolvedDependency.depId()
-                linkedDependencies.add(depId)
+                if (depId !in shadowedDependencies) {
+                    linkedDependencies.add(depId)
+                }
                 resolvedDependency.children.forEach { markAsResolved(it) }
             }
 
             fun linkDependencyTo(resolvedDependency: ResolvedDependency, dependencies: MutableCollection<String>) {
-                dependencies.add(resolvedDependency.module.toString())
+
+                // bom files
+                if (resolvedDependency.allModuleArtifacts.any { it.extension == "jar" }) kotlin.run link@{
+                    if (resolvedDependency.depId() in shadowedDependencies) return@link
+
+                    dependencies.add(resolvedDependency.module.toString())
+                }
+
                 resolvedDependency.children.forEach { linkDependencyTo(it, dependencies) }
             }
 
@@ -146,9 +170,6 @@ public open class BuildMiraiPluginV2 : Jar() {
                 logger.info { "resolving         : $depId" }
                 if (depId in linkedDependencies) {
                     markAsResolved(resolvedDependency)
-
-                    // bom files
-                    if (resolvedDependency.allModuleArtifacts.none { it.extension == "jar" }) return
 
                     linkDependencyTo(resolvedDependency, runtime)
                     if (depId in linkToApi) {
@@ -163,11 +184,20 @@ public open class BuildMiraiPluginV2 : Jar() {
             }
             runtimeClasspath.firstLevelModuleDependencies.forEach { resolveDependency(it) }
 
+            /*subprojects_fullpath.forEach { usedProject ->
+                val subProj = project.project(usedProject)
+                if ("${subProj.group}:${subProj.name}" !in linkedDependencies) {
+                    subprojects_unlinked_fullpath.add(usedProject)
+                }
+            }*/
+
             logger.info { "linkedDependencies: $linkedDependencies" }
             logger.info { "linkToAPi         : $linkToApi" }
             logger.info { "api               : $api" }
             logger.info { "runtime           : $runtime" }
             logger.info { "subprojects       : $subprojects" }
+            logger.info { "subprojects_linked: $subprojects_linked_fullpath" }
+            // logger.info { "subprojects_unlink: $subprojects_unlinked_fullpath" }
 
             val lenientConfiguration = runtimeClasspath.lenientConfiguration
             if (lenientConfiguration is DefaultLenientConfiguration) {
@@ -202,7 +232,7 @@ public open class BuildMiraiPluginV2 : Jar() {
                 }
                 val cid = artId.componentIdentifier
                 if (cid is ProjectComponentIdentifier) {
-                    if (cid.projectPath in subprojects_fullpath) {
+                    if (cid.projectPath in subprojects_linked_fullpath) {
                         return@forEach
                     }
                 }
@@ -243,7 +273,7 @@ public open class BuildMiraiPluginV2 : Jar() {
 
     internal fun init(target: KotlinTarget) {
         dependsOn(metadataTask)
-        archiveExtension.set("mirai.jar")
+        archiveExtension.set(FILE_SUFFIX)
         duplicatesStrategy = DuplicatesStrategy.WARN
 
         val compilations = target.compilations.filter { it.name == KotlinCompilation.MAIN_COMPILATION_NAME }
@@ -256,4 +286,5 @@ public open class BuildMiraiPluginV2 : Jar() {
             elm.path.startsWith("META-INF/") && elm.name.endsWith(".sf", ignoreCase = true)
         }
     }
+
 }

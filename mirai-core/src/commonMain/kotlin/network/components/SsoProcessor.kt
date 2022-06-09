@@ -26,7 +26,6 @@ import net.mamoe.mirai.internal.network.protocol.packet.login.wtlogin.WtLogin10
 import net.mamoe.mirai.internal.network.protocol.packet.login.wtlogin.WtLogin2
 import net.mamoe.mirai.internal.network.protocol.packet.login.wtlogin.WtLogin20
 import net.mamoe.mirai.internal.network.protocol.packet.login.wtlogin.WtLogin9
-import net.mamoe.mirai.internal.network.protocol.packet.sendAndExpect
 import net.mamoe.mirai.network.*
 import net.mamoe.mirai.utils.BotConfiguration.MiraiProtocol
 import net.mamoe.mirai.utils.LoginSolver
@@ -119,18 +118,24 @@ internal class SsoProcessorImpl(
     @Throws(LoginFailedException::class)
     override suspend fun login(handler: NetworkHandler) = withExceptionCollector {
         components[BdhSessionSyncer].loadServerListFromCache()
-        if (client.wLoginSigInfoInitialized) {
-            ssoContext.bot.components[EcdhInitialPublicKeyUpdater].refreshInitialPublicKeyAndApplyECDH()
-            kotlin.runCatching {
-                FastLoginImpl(handler).doLogin()
-            }.onFailure { e ->
-                collectException(e)
+        try {
+            if (client.wLoginSigInfoInitialized) {
+                ssoContext.bot.components[EcdhInitialPublicKeyUpdater].refreshInitialPublicKeyAndApplyECDH()
+                kotlin.runCatching {
+                    FastLoginImpl(handler).doLogin()
+                }.onFailure { e ->
+                    collectException(e)
+                    SlowLoginImpl(handler).doLogin()
+                }
+            } else {
+                client = createClient(ssoContext.bot)
+                ssoContext.bot.components[EcdhInitialPublicKeyUpdater].refreshInitialPublicKeyAndApplyECDH()
                 SlowLoginImpl(handler).doLogin()
             }
-        } else {
-            client = createClient(ssoContext.bot)
-            ssoContext.bot.components[EcdhInitialPublicKeyUpdater].refreshInitialPublicKeyAndApplyECDH()
-            SlowLoginImpl(handler).doLogin()
+        } catch (e: Exception) {
+            // Failed to log in, invalidate secrets.
+            ssoContext.bot.components[AccountSecretsManager].invalidate()
+            throw e
         }
         components[AccountSecretsManager].saveSecrets(ssoContext.account, AccountSecretsImpl(client))
         registerClientOnline(handler)
@@ -142,7 +147,9 @@ internal class SsoProcessorImpl(
     }
 
     private suspend fun registerClientOnline(handler: NetworkHandler): StatSvc.Register.Response {
-        return StatSvc.Register.online(client).sendAndExpect(handler).also { registerResp = it }
+        return handler.sendAndExpect(StatSvc.Register.online(client)).also {
+            registerResp = it
+        }
     }
 
     override suspend fun logout(handler: NetworkHandler) {
@@ -173,7 +180,8 @@ internal class SsoProcessorImpl(
         protected val bot get() = context.bot
         protected val logger get() = bot.logger
 
-        protected suspend fun <R : Packet?> OutgoingPacketWithRespType<R>.sendAndExpect(): R = sendAndExpect(handler)
+        protected suspend fun <R : Packet?> OutgoingPacketWithRespType<R>.sendAndExpect(): R =
+            handler.sendAndExpect(this)
 
         abstract suspend fun doLogin()
     }
@@ -294,7 +302,7 @@ internal class SsoProcessorImpl(
 
     private inner class FastLoginImpl(handler: NetworkHandler) : LoginStrategy(handler) {
         override suspend fun doLogin() {
-            val login10 = WtLogin10(client).sendAndExpect(handler)
+            val login10 = handler.sendAndExpect(WtLogin10(client))
             check(login10 is LoginPacketResponse.Success) { "Fast login failed: $login10" }
         }
     }
