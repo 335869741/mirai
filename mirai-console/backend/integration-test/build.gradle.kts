@@ -33,15 +33,15 @@ dependencies {
     api(project(":mirai-console-terminal"))
 
     api(`kotlin-stdlib-jdk8`)
-    api(`kotlinx-atomicfu-jvm`)
-    api(`kotlinx-coroutines-core-jvm`)
-    api(`kotlinx-serialization-core-jvm`)
-    api(`kotlinx-serialization-json-jvm`)
+    api(`kotlinx-atomicfu`)
+    api(`kotlinx-coroutines-core`)
+    api(`kotlinx-serialization-core`)
+    api(`kotlinx-serialization-json`)
     api(`kotlin-reflect`)
     api(`kotlin-test-junit5`)
 
 
-    api(`yamlkt-jvm`)
+    api(`yamlkt`)
     api(`jetbrains-annotations`)
     api(`caller-finder`)
     api(`kotlinx-coroutines-jdk8`)
@@ -94,10 +94,13 @@ mcit_test.configure {
 val crtProject = project
 allprojects {
     if (project != crtProject) {
+        if (project.file(".module-group.txt").exists()) return@allprojects
         project.afterEvaluate {
-            val tk = tasks.named<Jar>("jar")
-            subplugins.add(tk)
-            mcit_test.configure { dependsOn(tk) }
+            runCatching {
+                val tk = tasks.named<Jar>("jar")
+                subplugins.add(tk)
+                mcit_test.configure { dependsOn(tk) }
+            }
         }
     }
 }

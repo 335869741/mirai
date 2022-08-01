@@ -1,10 +1,10 @@
 /*
- * Copyright 2019-2021 Mamoe Technologies and contributors.
+ * Copyright 2019-2022 Mamoe Technologies and contributors.
  *
- *  此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
- *  Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
+ * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
  *
- *  https://github.com/mamoe/mirai/blob/master/LICENSE
+ * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 
 @file:Suppress("UnstableApiUsage", "UNUSED_VARIABLE", "NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
@@ -12,8 +12,6 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.jetbrains.dokka.base.DokkaBase
 import org.jetbrains.dokka.base.DokkaBaseConfiguration
-import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
-import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import java.time.LocalDateTime
 
 buildscript {
@@ -35,14 +33,18 @@ buildscript {
 }
 
 plugins {
-    kotlin("jvm") // version Versions.kotlinCompiler
-    kotlin("plugin.serialization") version Versions.kotlinCompiler
+    kotlin("jvm") apply false // version Versions.kotlinCompiler
+    kotlin("plugin.serialization") version Versions.kotlinCompiler apply false
+    id("com.google.osdetector")
     id("org.jetbrains.dokka") version Versions.dokka
     id("me.him188.kotlin-jvm-blocking-bridge") version Versions.blockingBridge
-    id("me.him188.kotlin-dynamic-delegation") version Versions.dynamicDelegation
-    id("com.gradle.plugin-publish") version "0.12.0" apply false
+    id("me.him188.kotlin-dynamic-delegation") version Versions.dynamicDelegation apply false
+    id("me.him188.maven-central-publish") version Versions.mavenCentralPublish apply false
+    id("com.gradle.plugin-publish") version "1.0.0-rc-3" apply false
     id("org.jetbrains.kotlinx.binary-compatibility-validator") version Versions.binaryValidator apply false
 }
+
+osDetector = osdetector
 
 GpgSigner.setup(project)
 
@@ -173,46 +175,6 @@ fun Project.configureDokka() {
             outputDirectory.set(
                 rootProject.projectDir.resolve("mirai-dokka/pages/snapshot")
             )
-        }
-    }
-}
-
-fun Project.configureMppShadow() {
-    val kotlin =
-        runCatching {
-
-            (this as ExtensionAware).extensions.getByName("kotlin") as? KotlinMultiplatformExtension
-        }.getOrNull() ?: return
-
-    if (project.configurations.findByName("jvmRuntimeClasspath") != null) {
-        val shadowJvmJar by tasks.creating(ShadowJar::class) sd@{
-            group = "mirai"
-            archiveClassifier.set("-all")
-
-            val compilations =
-                kotlin.targets.filter { it.platformType == KotlinPlatformType.jvm }
-                    .map { it.compilations["main"] }
-
-            compilations.forEach {
-                dependsOn(it.compileKotlinTask)
-                from(it.output)
-            }
-
-            from(project.configurations.findByName("jvmRuntimeClasspath"))
-
-            this.exclude { file ->
-                file.name.endsWith(".sf", ignoreCase = true)
-            }
-
-            /*
-        this.manifest {
-            this.attributes(
-                "Manifest-Version" to 1,
-                "Implementation-Vendor" to "Mamoe Technologies",
-                "Implementation-Title" to this.name.toString(),
-                "Implementation-Version" to this.version.toString()
-            )
-        }*/
         }
     }
 }

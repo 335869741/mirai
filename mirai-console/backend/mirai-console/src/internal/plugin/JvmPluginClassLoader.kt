@@ -94,6 +94,10 @@ internal class DynLibClassLoader : URLClassLoader {
                 } catch (ignored: ClassNotFoundException) {
                 }
             }
+            try {
+                return Class.forName(name, false, JavaSystemPlatformClassLoader)
+            } catch (ignored: ClassNotFoundException) {
+            }
             return null
         }
     }
@@ -203,7 +207,7 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
         this.sharedLibrariesLogger = ctx.sharedLibrariesLoader
         this.file = file
         this.ctx = ctx
-        init0()
+        init1()
     }
 
     @Suppress("Since15")
@@ -214,7 +218,16 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
         this.sharedLibrariesLogger = ctx.sharedLibrariesLoader
         this.file = file
         this.ctx = ctx
-        init0()
+        init1()
+    }
+
+    private fun init1() {
+        try {
+            init0()
+        } catch (e: Throwable) {
+            e.addSuppressed(RuntimeException("Failed to initialize new JvmPluginClassLoader, file=$file"))
+            throw e
+        }
     }
 
     private fun init0() {
@@ -247,7 +260,6 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
         dependency: String
     ): Boolean {
         if (dependency in sharedClLoadedDependencies) return true
-        if (dependency in privateClLoadedDependencies) return true
         return dependencies.any { it.containsSharedDependency(dependency) }
     }
 
@@ -288,8 +300,11 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
         if (dependencies.isEmpty()) return
         val results = ctx.downloader.resolveDependencies(
             dependencies, ctx.sharedLibrariesFilter,
-            DependencyFilter { node, _ ->
-                return@DependencyFilter !containsSharedDependency(node.artifact.depId())
+            DependencyFilter filter@{ node, _ ->
+                val depid = node.artifact.depId()
+                if (containsSharedDependency(depid)) return@filter false
+                if (depid in privateClLoadedDependencies) return@filter false
+                return@filter true
             })
         val files = results.artifactResults.mapNotNull { result ->
             result.artifact?.let { it to it.file }

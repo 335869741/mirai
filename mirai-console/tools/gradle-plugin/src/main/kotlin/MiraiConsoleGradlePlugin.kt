@@ -13,7 +13,6 @@
 package net.mamoe.mirai.console.gradle
 
 import com.github.jengelman.gradle.plugins.shadow.ShadowPlugin
-import com.jfrog.bintray.gradle.BintrayPlugin
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.gradle.api.Task
@@ -46,8 +45,10 @@ public class MiraiConsoleGradlePlugin : Plugin<Project> {
         try {
             languageSettings.optIn("kotlin.RequiresOptIn")
         } catch (e: NoSuchMethodError) {
-            @Suppress("DEPRECATION")
-            languageSettings.useExperimentalAnnotation("kotlin.RequiresOptIn")
+            // User is using < 1.6
+            target.compilations.forEach { compilation ->
+                compilation.kotlinOptions.freeCompilerArgs += "-Xopt-in=kotlin.RequiresOptIn"
+            }
         }
         dependencies { configureDependencies(project, this@configureSourceSet, target) }
     }
@@ -258,7 +259,6 @@ public class MiraiConsoleGradlePlugin : Plugin<Project> {
         plugins.apply("org.gradle.maven-publish")
         // plugins.apply("org.gradle.maven")
         plugins.apply(ShadowPlugin::class.java)
-        plugins.apply(BintrayPlugin::class.java)
 
         project.setupConfigurations()
 

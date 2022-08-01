@@ -39,18 +39,20 @@ dependencies {
 
     api("com.github.jengelman.gradle.plugins:shadow:6.0.0")
     api(`jetbrains-annotations`)
-    api("com.jfrog.bintray.gradle:gradle-bintray-plugin:1.8.5")
 
+    // override vulnerable Log4J version
+    // https://blog.gradle.org/log4j-vulnerability
+    implementation(`log4j-api`)
+    implementation(`log4j-core`)
 
     testApi(kotlin("test-junit5"))
-    testApi("org.junit.jupiter:junit-jupiter-api:${Versions.junit}")
-    testApi("org.junit.jupiter:junit-jupiter-params:${Versions.junit}")
+    testApi(`junit-jupiter-api`)
+    testApi(`junit-jupiter-params`)
 
     "integTestApi"(kotlin("test-junit5"))
-    "integTestApi"("org.junit.jupiter:junit-jupiter-api:${Versions.junit}")
-    "integTestApi"("org.junit.jupiter:junit-jupiter-params:${Versions.junit}")
-    "integTestImplementation"("org.junit.jupiter:junit-jupiter-engine:${Versions.junit}")
-//    "integTestImplementation"("org.spockframework:spock-core:1.3-groovy-2.5")
+    "integTestApi"(`junit-jupiter-api`)
+    "integTestApi"(`junit-jupiter-params`)
+    "integTestImplementation"(`junit-jupiter-engine`)
     "integTestImplementation"(gradleTestKit())
 
     kotlinVersionForIntegrationTest(kotlin("gradle-plugin", "1.5.21"))
@@ -116,5 +118,5 @@ tasks {
 }
 
 if (System.getenv("MIRAI_IS_SNAPSHOTS_PUBLISHING")?.toBoolean() == true) {
-    configurePublishing("mirai-console-gradle")
+    configurePublishing("mirai-console-gradle", skipPublicationSetup = true)
 }
