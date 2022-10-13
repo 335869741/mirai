@@ -23,15 +23,14 @@ import net.mamoe.mirai.data.MemberInfo
 import net.mamoe.mirai.internal.QQAndroidBot
 import net.mamoe.mirai.internal.contact.GroupImpl
 import net.mamoe.mirai.internal.contact.StrangerImpl
-import net.mamoe.mirai.internal.contact.info.FriendInfoImpl
-import net.mamoe.mirai.internal.contact.info.GroupInfoImpl
-import net.mamoe.mirai.internal.contact.info.MemberInfoImpl
-import net.mamoe.mirai.internal.contact.info.StrangerInfoImpl
+import net.mamoe.mirai.internal.contact.friendgroup.FriendGroupImpl
+import net.mamoe.mirai.internal.contact.info.*
 import net.mamoe.mirai.internal.contact.toMiraiFriendInfo
 import net.mamoe.mirai.internal.network.component.ComponentKey
 import net.mamoe.mirai.internal.network.component.ComponentStorage
 import net.mamoe.mirai.internal.network.isValid
 import net.mamoe.mirai.internal.network.notice.NewContactSupport
+import net.mamoe.mirai.internal.network.protocol.data.jce.StGroupRankInfo
 import net.mamoe.mirai.internal.network.protocol.data.jce.StTroopNum
 import net.mamoe.mirai.internal.network.protocol.data.jce.SvcRespRegister
 import net.mamoe.mirai.internal.network.protocol.data.jce.isValid
@@ -42,7 +41,6 @@ import net.mamoe.mirai.utils.MiraiLogger
 import net.mamoe.mirai.utils.info
 import net.mamoe.mirai.utils.retryCatching
 import net.mamoe.mirai.utils.verbose
-import kotlin.jvm.Synchronized
 import kotlin.jvm.Volatile
 
 /**
@@ -53,13 +51,14 @@ import kotlin.jvm.Volatile
 internal interface ContactUpdater {
     val otherClientsLock: Mutex
     val groupListModifyLock: Mutex
+    val friendListLock: Mutex
+    val friendGroupsLock: Mutex
+    val strangerListLock: Mutex
 
-    /**
-     * Load all caches to the bot this [ContactUpdater] works for.
-     *
-     * Implementation must be thread-safe.
-     */
-    suspend fun loadAll(registerResp: SvcRespRegister)
+    suspend fun reloadFriendList(registerResp: SvcRespRegister)
+    suspend fun reloadFriendGroupList()
+    suspend fun reloadGroupList()
+    suspend fun reloadStrangerList()
 
     /**
      * Closes all contacts and save them to cache if needed.
@@ -78,20 +77,11 @@ internal class ContactUpdaterImpl(
 ) : ContactUpdater, NewContactSupport {
     override val otherClientsLock: Mutex = Mutex()
     override val groupListModifyLock: Mutex = Mutex()
+    override val friendListLock: Mutex = Mutex()
+    override val friendGroupsLock: Mutex = Mutex()
+    override val strangerListLock: Mutex = Mutex()
     private val cacheService get() = components[ContactCacheService]
-    private val lock = Mutex()
 
-    override suspend fun loadAll(registerResp: SvcRespRegister) {
-        lock.withLock {
-            coroutineScope {
-                launch { reloadFriendList(registerResp) }
-                launch { reloadGroupList() }
-                launch { reloadStrangerList() }
-            }
-        }
-    }
-
-    @Synchronized
     override fun closeAllContacts(e: CancellationException) {
         if (!initFriendOk) {
             bot.friends.delegate.removeAll { it.cancel(e); true }
@@ -102,11 +92,17 @@ internal class ContactUpdaterImpl(
         if (!initStrangerOk) {
             bot.strangers.delegate.removeAll { it.cancel(e); true }
         }
+        if (!initFriendGroupOk) {
+            bot.friendGroups.friendGroups.clear()
+        }
     }
 
 
     @Volatile
     private var initFriendOk = false
+
+    @Volatile
+    private var initFriendGroupOk = false
 
     @Volatile
     private var initGroupOk = false
@@ -117,7 +113,7 @@ internal class ContactUpdaterImpl(
     /**
      * Don't use concurrently
      */
-    private suspend fun reloadFriendList(registerResp: SvcRespRegister) {
+    override suspend fun reloadFriendList(registerResp: SvcRespRegister) = friendListLock.withLock {
         if (initFriendOk) {
             return
         }
@@ -182,11 +178,51 @@ internal class ContactUpdaterImpl(
             bot.addNewFriendAndRemoveStranger(friendInfoImpl)
         }
 
-
         initFriendOk = true
     }
 
-    private suspend fun addGroupToBot(stTroopNum: StTroopNum) = stTroopNum.run {
+    override suspend fun reloadFriendGroupList() = friendGroupsLock.withLock {
+        if (initFriendGroupOk) return
+
+        suspend fun refreshFriendGroupList(): List<FriendGroupImpl> {
+            logger.info { "Start loading friendGroup list..." }
+            val friendGroupInfos = mutableListOf<FriendGroupImpl>()
+
+            var count = 0
+            var total: Short
+            while (true) {
+                val data = bot.network.sendAndExpect(
+                    FriendList.GetFriendGroupList(bot.client, 0, 0, count, 150)
+                )
+
+                total = data.totoalGroupCount
+
+                for (jceInfo in data.groupList) {
+                    friendGroupInfos.add(
+                        FriendGroupImpl(
+                            bot, FriendGroupInfo(
+                                jceInfo.groupId.toInt(),
+                                jceInfo.groupname
+                            )
+                        )
+                    )
+                }
+
+                count += data.groupList.size
+                logger.verbose { "Loading friendGroup list: ${count}/${total}" }
+                if (count >= total) break
+            }
+            logger.info { "Successfully loaded friendGroup list: $count in total" }
+            return friendGroupInfos
+        }
+
+        bot.friendGroups.friendGroups.clear()
+        bot.friendGroups.friendGroups.addAll(refreshFriendGroupList())
+
+        initFriendGroupOk = true
+    }
+
+    private suspend fun addGroupToBot(stTroopNum: StTroopNum, stGroupRankInfo: StGroupRankInfo?) = stTroopNum.run {
         suspend fun refreshGroupMemberList(): Sequence<MemberInfo> {
             return Mirai.getRawGroupMemberList(
                 bot,
@@ -217,13 +253,13 @@ internal class ContactUpdaterImpl(
                 bot = bot,
                 parentCoroutineContext = bot.coroutineContext,
                 id = groupCode,
-                groupInfo = GroupInfoImpl(stTroopNum),
+                groupInfo = GroupInfoImpl(stTroopNum, stGroupRankInfo),
                 members = members,
             ),
         )
     }
 
-    private suspend fun reloadStrangerList() {
+    override suspend fun reloadStrangerList() = strangerListLock.withLock {
         if (initStrangerOk) {
             return
         }
@@ -249,7 +285,7 @@ internal class ContactUpdaterImpl(
 
     }
 
-    private suspend fun reloadGroupList() {
+    override suspend fun reloadGroupList() = groupListModifyLock.withLock {
         if (initGroupOk) {
             return
         }
@@ -266,7 +302,9 @@ internal class ContactUpdaterImpl(
             troopListData.groups.forEach { group ->
                 launch {
                     semaphore.withPermit {
-                        retryCatching(5) { addGroupToBot(group) }.getOrThrow()
+                        retryCatching(5) {
+                            addGroupToBot(group, troopListData.ranks.find { it.dwGroupCode == group.groupCode })
+                        }.getOrThrow()
                     }
                 }
             }
