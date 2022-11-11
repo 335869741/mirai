@@ -10,18 +10,18 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
-import org.gradle.api.DomainObjectCollection
 import org.gradle.api.Project
 import org.gradle.api.publish.tasks.GenerateModuleMetadata
 import org.gradle.kotlin.dsl.create
 import org.gradle.kotlin.dsl.creating
-import org.gradle.kotlin.dsl.extra
 import org.gradle.kotlin.dsl.get
 import org.jetbrains.kotlin.gradle.dsl.KotlinMultiplatformExtension
 import org.jetbrains.kotlin.gradle.plugin.KotlinPlatformType
 import org.jetbrains.kotlin.gradle.plugin.KotlinTarget
-import java.io.File
 
+/**
+ * @see RelocationNotes
+ */
 fun Project.configureMppShadow() {
     val kotlin = kotlinMpp ?: return
 
@@ -38,6 +38,7 @@ fun Project.configureMppShadow() {
 
 /**
  * Relocate some dependencies for `.jar`
+ * @see RelocationNotes
  */
 private fun KotlinTarget.configureRelocationForTarget(project: Project) = project.run {
     val relocateDependencies =
@@ -79,15 +80,17 @@ private fun KotlinTarget.configureRelocationForTarget(project: Project) = projec
                 from(project.configurations.getByName("${targetName}RuntimeClasspath")
                     .files
                     .filter { file ->
-                        relocationFilters.any { filter ->
+                        val matchingFilter = relocationFilters.find { filter ->
                             // file.absolutePath example: /Users/xxx/.gradle/caches/modules-2/files-2.1/org.jetbrains.kotlin/kotlin-stdlib-jdk8/1.7.0-RC/7f9f07fc65e534c15a820f61d846b9ffdba8f162/kotlin-stdlib-jdk8-1.7.0-RC.jar
                             filter.matchesFile(file)
-                        }.also {
-                            fileFiltered = fileFiltered || it
-                            if (it) {
-                                println("Including file: ${file.absolutePath}")
-                            }
                         }
+
+                        if (matchingFilter != null) {
+                            fileFiltered = true
+                            println("Including file: ${file.absolutePath}")
+                        }
+
+                        matchingFilter?.includeInRuntime == true
                     }
                 )
                 check(fileFiltered) { "[Shadow Relocation] Expected at least one file filtered for target $targetName. Filters: $relocationFilters" }
@@ -220,62 +223,10 @@ private fun Project.configureRegularShadowJar(kotlin: KotlinMultiplatformExtensi
     }
 }
 
-data class RelocationFilter(
-    val groupId: String,
-    val artifactId: String? = null,
-    val shadowFilter: String = groupId,
-    val filesFilter: String = groupId.replace(".", "/")
-) {
-
-    fun matchesFile(file: File): Boolean {
-        val path = file.absolutePath.replace("\\", "/")
-        return filesFilter in path
-                || groupId in path
-    }
-
-    fun matchesDependency(groupId: String?, artifactId: String?): Boolean {
-        if (this.groupId == groupId) return true
-        if (this.artifactId != null && this.artifactId == artifactId) return true
-
-        return false
-    }
-}
-
-val Project.relocationFilters: DomainObjectCollection<RelocationFilter>
-    get() {
-        if (project.extra.has("relocationFilters")) {
-            @Suppress("UNCHECKED_CAST")
-            return project.extra.get("relocationFilters") as DomainObjectCollection<RelocationFilter>
-
-        } else {
-            val container = project.objects.domainObjectSet(RelocationFilter::class.java)
-            project.extra.set("relocationFilters", container)
-            return container
-        }
-    }
-
 private const val relocationRootPackage = "net.mamoe.mirai.internal.deps"
 
 private fun ShadowJar.setRelocations() {
     project.relocationFilters.forEach { relocation ->
         relocate(relocation.shadowFilter, "$relocationRootPackage.${relocation.groupId}")
     }
-}
-
-fun Project.configureRelocationForCore() {
-    // WARNING: You must also consider relocating transitive dependencies.
-    // Otherwise, user will get NoClassDefFound error when using mirai as a classpath dependency. See #2263.
-
-    relocateAllFromGroupId("io.ktor")
-    relocateAllFromGroupId("com.squareup.okhttp3")
-    relocateAllFromGroupId("com.squareup.okio")
-}
-
-fun Project.relocateAllFromGroupId(groupId: String) {
-    relocationFilters.add(RelocationFilter(groupId))
-}
-
-// This does not include transitive dependencies
-fun Project.relocateExactArtifact(groupId: String, artifactId: String) {
-    relocationFilters.add(RelocationFilter(groupId, artifactId))
 }

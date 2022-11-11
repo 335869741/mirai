@@ -19,7 +19,7 @@ import org.jetbrains.kotlin.gradle.plugin.KotlinDependencyHandler
 object Versions {
     val project = System.getenv("mirai.build.project.version")?.takeIf { it.isNotBlank() }
         ?: System.getProperty("mirai.build.project.version")?.takeIf { it.isNotBlank() }
-        ?: /*PROJECT_VERSION_START*/"2.13.0"/*PROJECT_VERSION_END*/
+        ?: /*PROJECT_VERSION_START*/"2.14.0"/*PROJECT_VERSION_END*/
 
     val core = project
     val console = project
@@ -35,6 +35,10 @@ object Versions {
     const val coroutines = "1.6.4"
     const val atomicFU = "0.18.3"
     const val serialization = "1.3.3"
+
+    /**
+     * 注意, 不要轻易升级 ktor 版本. 阅读 [RelocationNotes], 尤其是间接依赖部分.
+     */
     const val ktor = "2.1.0"
 
     const val binaryValidator = "0.4.0"
@@ -51,7 +55,7 @@ object Versions {
     const val logback = "1.2.5"
     const val slf4j = "1.7.32"
     const val log4j = "2.17.2"
-    const val asm = "9.1"
+    const val asm = "9.4"
     const val difflib = "1.3.0"
     const val netty = "4.1.63.Final"
     const val bouncycastle = "1.64"
@@ -161,6 +165,10 @@ const val `caller-finder` = "io.github.karlatemp:caller:1.1.1"
 
 const val `android-runtime` = "com.google.android:android:${Versions.android}"
 const val `netty-all` = "io.netty:netty-all:${Versions.netty}"
+const val `netty-handler` = "io.netty:netty-handler:${Versions.netty}"
+const val `netty-common` = "io.netty:netty-common:${Versions.netty}"
+const val `netty-transport` = "io.netty:netty-transport:${Versions.netty}"
+const val `netty-buffer` = "io.netty:netty-buffer:${Versions.netty}"
 const val `bouncycastle` = "org.bouncycastle:bcprov-jdk15on:${Versions.bouncycastle}"
 
 const val `maven-resolver-api` = "org.apache.maven.resolver:maven-resolver-api:${Versions.mavenArtifactResolver}"
