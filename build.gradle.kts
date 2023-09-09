@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -9,9 +9,9 @@
 
 @file:Suppress("UnstableApiUsage", "UNUSED_VARIABLE", "NULLABILITY_MISMATCH_BASED_ON_JAVA_ANNOTATIONS")
 
-import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.jetbrains.dokka.base.DokkaBase
 import org.jetbrains.dokka.base.DokkaBaseConfiguration
+import shadow.configureMppShadow
 import java.time.LocalDateTime
 
 buildscript {
@@ -40,14 +40,15 @@ plugins {
     id("me.him188.kotlin-jvm-blocking-bridge") version Versions.blockingBridge
     id("me.him188.kotlin-dynamic-delegation") version Versions.dynamicDelegation apply false
     id("me.him188.maven-central-publish") version Versions.mavenCentralPublish apply false
-    id("com.gradle.plugin-publish") version "1.0.0-rc-3" apply false
+    id("com.gradle.plugin-publish") version "1.1.0" apply false
     id("org.jetbrains.kotlinx.binary-compatibility-validator") version Versions.binaryValidator apply false
+    id("com.android.library") apply false
+    id("de.mannodermaus.android-junit5") version "1.8.2.1" apply false
 }
 
 osDetector = osdetector
 BuildSrcRootProjectHolder.value = rootProject
-
-GpgSigner.setup(project)
+BuildSrcRootProjectHolder.lastUpdateTime = System.currentTimeMillis()
 
 analyzes.CompiledCodeVerify.run { registerAllVerifyTasks() }
 
@@ -71,28 +72,13 @@ allprojects {
         configureMppShadow()
         configureEncoding()
         configureKotlinTestSettings()
-        configureKotlinExperimentalUsages()
-
-        runCatching {
-            blockingBridge {
-                unitCoercion = me.him188.kotlin.jvm.blocking.bridge.compiler.UnitCoercion.COMPATIBILITY
-            }
-        }
-
-        //  useIr()
+        configureKotlinOptIns()
 
         if (isKotlinJvmProject) {
             configureFlattenSourceSets()
         }
         configureJarManifest()
         substituteDependenciesUsingExpectedVersion()
-
-        if (System.getenv("MIRAI_IS_SNAPSHOTS_PUBLISHING") != null) {
-            project.tasks.filterIsInstance<ShadowJar>().forEach { shadow ->
-                shadow.enabled = false // they are too big
-            }
-            logger.info("Disabled all shadow tasks.")
-        }
     }
 }
 
@@ -120,12 +106,6 @@ tasks.register("cleanExceptIntellij") {
 extensions.findByName("buildScan")?.withGroovyBuilder {
     setProperty("termsOfServiceUrl", "https://gradle.com/terms-of-service")
     setProperty("termsOfServiceAgree", "yes")
-}
-
-fun Project.useIr() {
-    kotlinCompilations?.forEach { kotlinCompilation ->
-        kotlinCompilation.kotlinOptions.freeCompilerArgs += "-Xuse-ir"
-    }
 }
 
 fun Project.configureDokka() {

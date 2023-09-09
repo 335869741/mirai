@@ -24,13 +24,12 @@ import net.mamoe.mirai.internal.MiraiImpl
 import net.mamoe.mirai.internal.network.components.EventDispatcher
 import net.mamoe.mirai.message.action.Nudge
 import net.mamoe.mirai.message.data.*
+import net.mamoe.mirai.mock.MockActions
 import net.mamoe.mirai.mock.MockBotFactory
 import net.mamoe.mirai.mock.contact.MockGroup
 import net.mamoe.mirai.mock.database.queryMessageInfo
-import net.mamoe.mirai.mock.internal.contact.AQQ_RECALL_FAILED_MESSAGE
-import net.mamoe.mirai.mock.internal.contact.MockFriendImpl
-import net.mamoe.mirai.mock.internal.contact.MockImage
-import net.mamoe.mirai.mock.internal.contact.MockStrangerImpl
+import net.mamoe.mirai.mock.database.removeMessageInfo
+import net.mamoe.mirai.mock.internal.contact.*
 import net.mamoe.mirai.mock.internal.msgsrc.registerMockMsgSerializers
 import net.mamoe.mirai.mock.utils.mock
 import net.mamoe.mirai.mock.utils.simpleMemberInfo
@@ -40,6 +39,7 @@ internal class MockMiraiImpl : MiraiImpl() {
     companion object {
         init {
             registerMockMsgSerializers()
+            registerMockServices()
         }
     }
 
@@ -178,6 +178,8 @@ internal class MockMiraiImpl : MiraiImpl() {
         val canDelete = when (group.botPermission) {
             MemberPermission.OWNER -> true
             MemberPermission.ADMINISTRATOR -> kotlin.run w@{
+                if (info.sender == bot.id) return@w true
+
                 val member = group.getMember(info.sender) ?: return@w true
                 member.permission == MemberPermission.MEMBER
             }
@@ -241,9 +243,21 @@ internal class MockMiraiImpl : MiraiImpl() {
                     )
                     if (!resp) doFailed()
                 }
-                else -> {
+
+                is OnlineMessageSource.Incoming.FromStranger -> doFailed()
+                is OnlineMessageSource.Incoming.FromTemp -> doFailed()
+
+
+                is OnlineMessageSource.Outgoing.ToStranger -> {
+                    bot.mock().msgDatabase.removeMessageInfo(source)
                     // TODO: No Event
                 }
+                is OnlineMessageSource.Outgoing.ToTemp -> {
+                    bot.mock().msgDatabase.removeMessageInfo(source)
+                    // TODO: No Event
+                }
+
+                else -> doFailed()
             }
         } else {
             source as OfflineMessageSource
@@ -267,12 +281,15 @@ internal class MockMiraiImpl : MiraiImpl() {
                     )
                     if (!resp) doFailed()
                 }
-                MessageSourceKind.TEMP -> {
-                    // TODO: No Event
+                MessageSourceKind.TEMP, MessageSourceKind.STRANGER -> {
+                    if (source.fromId != bot.id) {
+                        doFailed()
+                    }
+
+                    MockActions.fireMessageRecalled(source, bot.asFriend)
                 }
-                MessageSourceKind.STRANGER -> {
-                    // TODO: No Event
-                }
+
+                else -> doFailed()
             }
         }
     }

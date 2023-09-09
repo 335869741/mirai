@@ -107,8 +107,16 @@ internal class MessageVisitorTest {
             return arrayOf("visitDice") + super.visitDice(message, data)
         }
 
+        override fun visitRockPaperScissors(message: RockPaperScissors, data: Unit): Array<String> {
+            return arrayOf("visitRockPaperScissors") + super.visitRockPaperScissors(message, data)
+        }
+
         override fun visitFace(message: Face, data: Unit): Array<String> {
             return arrayOf("visitFace") + super.visitFace(message, data)
+        }
+
+        override fun visitSuperFace(message: SuperFace, data: Unit): Array<String> {
+            return arrayOf("visitSuperFace") + super.visitSuperFace(message, data)
         }
 
         override fun visitFileMessage(message: FileMessage, data: Unit): Array<String> {
@@ -288,6 +296,17 @@ internal class MessageVisitorTest {
 
         assertContentEquals(
             arrayOf(
+                "visitSuperFace",
+                "visitHummerMessage",
+                "visitMessageContent",
+                "visitSingleMessage",
+                "visitMessage",
+            ),
+            SuperFace.from(Face(Face.DA_CALL)).accept(GetCalledMethodNames)
+        )
+
+        assertContentEquals(
+            arrayOf(
                 "visitPokeMessage",
                 "visitHummerMessage",
                 "visitMessageContent",
@@ -333,6 +352,18 @@ internal class MessageVisitorTest {
                 "visitMessage",
             ),
             Dice(1).accept(GetCalledMethodNames)
+        )
+
+        assertContentEquals(
+            arrayOf(
+                "visitRockPaperScissors",
+                "visitMarketFace",
+                "visitHummerMessage",
+                "visitMessageContent",
+                "visitSingleMessage",
+                "visitMessage",
+            ),
+            RockPaperScissors.PAPER.accept(GetCalledMethodNames)
         )
 
 

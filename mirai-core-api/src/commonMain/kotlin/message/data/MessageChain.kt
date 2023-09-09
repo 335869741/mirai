@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -34,8 +34,9 @@ import net.mamoe.mirai.message.data.MessageSource.Key.recall
 import net.mamoe.mirai.message.data.MessageSource.Key.recallIn
 import net.mamoe.mirai.message.data.visitor.MessageVisitor
 import net.mamoe.mirai.utils.*
-import kotlin.jvm.*
+import java.util.stream.Stream
 import kotlin.reflect.KProperty
+import kotlin.streams.asSequence
 import net.mamoe.mirai.console.compiler.common.ResolveContext.Kind.RESTRICTED_ABSTRACT_MESSAGE_KEYS as RAMK
 
 /**
@@ -374,18 +375,22 @@ public sealed interface MessageChain :
  * @since 2.12
  */
 // Java: MessageUtils.emptyMessageChain()
-@Suppress("DEPRECATION")
+@Suppress("DEPRECATION", "DEPRECATION_ERROR")
 public fun emptyMessageChain(): MessageChain = EmptyMessageChain
 
 /**
- * 不含任何元素的 [MessageChain]. 已弃用, 请使用 [emptyMessageChain]
+ * 不含任何元素的 [MessageChain]. 已弃用, 请使用 [emptyMessageChain].
  */
 //@Serializable(MessageChain.Serializer::class)
 @Deprecated(
     "Please use emptyMessageChain()",
-    replaceWith = ReplaceWith("emptyMessageChain()", "net.mamoe.mirai.message.data.emptyMessageChain")
+    replaceWith = ReplaceWith("emptyMessageChain()", "net.mamoe.mirai.message.data.emptyMessageChain"),
+    level = DeprecationLevel.ERROR
 )
-@DeprecatedSinceMirai(warningSince = "2.12")
+@DeprecatedSinceMirai(
+    warningSince = "2.12",
+    errorSince = "2.14"
+) // make internal after deprecation cycle, but keep as @PublishedApi!
 @Suppress("EXPOSED_SUPER_CLASS")
 public object EmptyMessageChain : MessageChain, List<SingleMessage> by emptyList(),
     AbstractMessageChain(), DirectSizeAccess, DirectToStringAccess {
@@ -549,6 +554,11 @@ public fun Message.toMessageChain(): MessageChain = when (this) {
     else -> error("Message is either MessageChain nor SingleMessage: $this")
 }
 
+/**
+ * 扁平化 [this] 并创建一个 [MessageChain].
+ */
+@JvmName("newChain")
+public fun Stream<Message>.toMessageChain(): MessageChain = this.asSequence().toMessageChain()
 
 // region delegate
 

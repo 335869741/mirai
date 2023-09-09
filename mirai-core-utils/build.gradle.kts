@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -8,6 +8,8 @@
  */
 
 @file:Suppress("UNUSED_VARIABLE")
+
+import shadow.relocateImplementation
 
 plugins {
     kotlin("multiplatform")
@@ -23,9 +25,9 @@ description = "mirai-core utilities"
 
 kotlin {
     explicitApi()
+    apply(plugin = "explicit-api")
 
-    configureJvmTargetsHierarchical()
-    configureNativeTargetsHierarchical(project)
+    configureJvmTargetsHierarchical("net.mamoe.mirai.utils")
 
     sourceSets {
         val commonMain by getting {
@@ -36,7 +38,7 @@ kotlin {
                 api(`kotlinx-coroutines-core`)
 
                 implementation(`kotlinx-serialization-protobuf`)
-                implementation(`ktor-io`)
+                relocateImplementation(`ktor-io_relocated`)
             }
         }
 
@@ -44,6 +46,7 @@ kotlin {
             dependencies {
                 api(yamlkt)
                 implementation(`kotlinx-coroutines-test`)
+                api(`junit-jupiter-api`)
             }
         }
 
@@ -54,10 +57,8 @@ kotlin {
         }
 
         findByName("androidMain")?.apply {
-            //
             dependencies {
-                compileOnly(`android-runtime`)
-//                    api1(`ktor-client-android`)
+                implementation(`androidx-annotation`)
             }
         }
 
@@ -67,13 +68,8 @@ kotlin {
 
         findByName("jvmTest")?.apply {
             dependencies {
+                implementation(`kotlinx-coroutines-debug`)
                 runtimeOnly(files("build/classes/kotlin/jvm/test")) // classpath is not properly set by IDE
-            }
-        }
-
-        findByName("nativeMain")?.apply {
-            dependencies {
-//                implementation("com.soywiz.korlibs.krypto:krypto:2.4.12") // ':mirai-core-utils:compileNativeMainKotlinMetadata' fails because compiler cannot find reference
             }
         }
     }
@@ -91,11 +87,10 @@ if (tasks.findByName("androidMainClasses") != null) {
         group = "verification"
         this.mustRunAfter("androidMainClasses")
     }
-    tasks.getByName("androidTest").dependsOn("checkAndroidApiLevel")
+    tasks.findByName("androidTest")?.dependsOn("checkAndroidApiLevel")
 }
 
 configureMppPublishing()
-relocateKtorForCore(true)
 
 //mavenCentralPublish {
 //    artifactId = "mirai-core-utils"

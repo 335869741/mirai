@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -10,8 +10,8 @@
 @file:Suppress("UNUSED_VARIABLE")
 
 import BinaryCompatibilityConfigurator.configureBinaryValidators
-import org.jetbrains.kotlin.gradle.plugin.mpp.AbstractNativeLibrary
-import org.jetbrains.kotlin.gradle.plugin.mpp.KotlinNativeTarget
+import shadow.relocateCompileOnly
+import shadow.relocateImplementation
 
 plugins {
     kotlin("multiplatform")
@@ -27,9 +27,14 @@ description = "Mirai Protocol implementation for QQ Android"
 
 kotlin {
     explicitApi()
+    apply(plugin = "explicit-api")
 
-    configureJvmTargetsHierarchical()
-    configureNativeTargetsHierarchical(project)
+    configureJvmTargetsHierarchical("net.mamoe.mirai.internal")
+
+    optInForAllSourceSets("net.mamoe.mirai.utils.MiraiExperimentalApi")
+    optInForAllSourceSets("net.mamoe.mirai.utils.MiraiInternalApi")
+    optInForAllSourceSets("net.mamoe.mirai.LowLevelApi")
+    optInForAllSourceSets("kotlinx.serialization.ExperimentalSerializationApi")
 
     sourceSets.apply {
 
@@ -40,10 +45,17 @@ kotlin {
                 api(`kotlinx-serialization-json`)
                 api(`kotlinx-coroutines-core`)
 
+                implementation(`kt-bignum`)
                 implementation(project(":mirai-core-utils"))
                 implementation(`kotlinx-serialization-protobuf`)
-                implementation(`ktor-io`)
-                implementation(`ktor-client-core`)
+                implementation(`kotlinx-atomicfu`)
+
+                // runtime from mirai-core-utils
+                relocateCompileOnly(`ktor-io_relocated`)
+
+//                relocateImplementation(`ktor-http_relocated`)
+//                relocateImplementation(`ktor-serialization_relocated`)
+//                relocateImplementation(`ktor-websocket-serialization_relocated`)
             }
         }
 
@@ -52,6 +64,7 @@ kotlin {
                 implementation(kotlin("script-runtime"))
                 implementation(`kotlinx-coroutines-test`)
                 api(yamlkt)
+                api(`junit-jupiter-api`)
             }
         }
 
@@ -59,7 +72,6 @@ kotlin {
             dependencies {
                 implementation(`log4j-api`)
                 implementation(`netty-handler`)
-                implementation(`ktor-client-okhttp`)
                 api(`kotlinx-coroutines-jdk8`) // use -jvm modules for this magic target 'jvmBase'
             }
         }
@@ -71,17 +83,24 @@ kotlin {
         }
 
         findByName("androidMain")?.apply {
-            dependsOn(commonMain)
             dependencies {
-                compileOnly(`android-runtime`)
+                if (rootProject.property("mirai.android.target.api.level")!!.toString().toInt() < 23) {
+                    // Ship with BC if we are targeting 23 or lower where AndroidKeyStore is not stable enough.
+                    // For more info, read `net.mamoe.mirai.internal.utils.crypto.EcdhAndroidKt.create` in `androidMain`.
+                    implementation(bouncycastle)
+                }
             }
         }
+
+        // For Android with JDK
         findByName("androidTest")?.apply {
             dependencies {
-                implementation(kotlin("test", Versions.kotlinCompiler))
-                implementation(kotlin("test-junit5", Versions.kotlinCompiler))
-                implementation(kotlin("test-annotations-common"))
-                implementation(kotlin("test-common"))
+                implementation(bouncycastle)
+            }
+        }
+        // For Android with SDK
+        findByName("androidUnitTest")?.apply {
+            dependencies {
                 implementation(bouncycastle)
             }
         }
@@ -100,89 +119,40 @@ kotlin {
             }
         }
 
-        findByName("nativeMain")?.apply {
+
+        // Kt bignum
+        findByName("jvmBaseMain")?.apply {
             dependencies {
+                relocateImplementation(`kt-bignum_relocated`)
             }
         }
 
-        NATIVE_TARGETS.forEach { targetName ->
-            val defFile = projectDir.resolve("src/nativeMain/cinterop/OpenSSL.def")
-            val target = targets.getByName(targetName) as KotlinNativeTarget
-            target.compilations.getByName("main").cinterops.create("OpenSSL")
-                .apply {
-                    this.defFile = defFile
-                    packageName("openssl")
-                }
 
-            configure(target.binaries.filterIsInstance<AbstractNativeLibrary>()) {
-                export(project(":mirai-core-api"))
-                export(project(":mirai-core-utils"))
-            }
-        }
-
-        UNIX_LIKE_TARGETS.forEach { target ->
-            (targets.getByName(target) as KotlinNativeTarget).compilations.getByName("main").cinterops.create("Socket")
-                .apply {
-                    defFile = projectDir.resolve("src/unixMain/cinterop/Socket.def")
-                    packageName("sockets")
-                }
-        }
-
-        WIN_TARGETS.forEach { target ->
-            (targets.getByName(target) as KotlinNativeTarget).compilations.getByName("main").cinterops.create("Socket")
-                .apply {
-                    defFile = projectDir.resolve("src/mingwX64Main/cinterop/Socket.def")
-                    packageName("sockets")
-                }
-        }
-
-        configure(WIN_TARGETS.map { getByName(it + "Main") }) {
+        // Ktor
+        findByName("commonMain")?.apply {
             dependencies {
-                implementation(`ktor-client-curl`)
+                compileOnly(`ktor-io`)
+                implementation(`ktor-client-core`)
             }
         }
-
-        configure(LINUX_TARGETS.map { getByName(it + "Main") }) {
+        findByName("jvmBaseMain")?.apply {
+            // relocate for JVM like modules
             dependencies {
-                implementation(`ktor-client-cio`)
+                relocateCompileOnly(`ktor-io_relocated`) // runtime from mirai-core-utils
+                relocateImplementation(`ktor-client-core_relocated`)
             }
         }
-
-        findByName("darwinMain")?.apply {
+        findByName("jvmBaseMain")?.apply {
             dependencies {
-                implementation(`ktor-client-darwin`)
+                relocateImplementation(`ktor-client-okhttp_relocated`)
             }
         }
 
-        disableCrossCompile()
-//        val unixMain by getting {
-//            dependencies {
-//                implementation(`ktor-client-cio`)
-//            }
-//        }
     }
 }
 
-afterEvaluate {
-    val main = projectDir.resolve("src/nativeTest/kotlin/local/TestMain.kt")
-    if (!main.exists()) {
-        main.writeText(
-            """
-            /*
-             * Copyright 2019-2022 Mamoe Technologies and contributors.
-             *
-             * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
-             * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
-             *
-             * https://github.com/mamoe/mirai/blob/dev/LICENSE
-             */
-
-            package net.mamoe.mirai.internal.local
-
-            fun main() {}
-        """.trimIndent()
-        )
-    }
+atomicfu {
+    transformJvm = false
 }
 
 if (tasks.findByName("androidMainClasses") != null) {
@@ -197,12 +167,11 @@ if (tasks.findByName("androidMainClasses") != null) {
         group = "verification"
         this.mustRunAfter("androidMainClasses")
     }
-    tasks.getByName("androidTest").dependsOn("checkAndroidApiLevel")
+    tasks.findByName("androidTest")?.dependsOn("checkAndroidApiLevel")
 }
 
 configureMppPublishing()
 configureBinaryValidators(setOf("jvm", "android").filterTargets())
-relocateKtorForCore(false)
 
 //mavenCentralPublish {
 //    artifactId = "mirai-core"

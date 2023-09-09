@@ -17,6 +17,7 @@ import net.mamoe.mirai.contact.*
 import net.mamoe.mirai.contact.announcement.OfflineAnnouncement
 import net.mamoe.mirai.contact.announcement.buildAnnouncementParameters
 import net.mamoe.mirai.contact.file.RemoteFiles
+import net.mamoe.mirai.contact.roaming.RoamingMessages
 import net.mamoe.mirai.data.GroupHonorType
 import net.mamoe.mirai.data.MemberInfo
 import net.mamoe.mirai.event.broadcast
@@ -30,7 +31,10 @@ import net.mamoe.mirai.mock.contact.MockGroup
 import net.mamoe.mirai.mock.contact.MockGroupControlPane
 import net.mamoe.mirai.mock.contact.MockNormalMember
 import net.mamoe.mirai.mock.contact.active.MockGroupActive
+import net.mamoe.mirai.mock.contact.essence.MockEssences
 import net.mamoe.mirai.mock.internal.contact.active.MockGroupActiveImpl
+import net.mamoe.mirai.mock.internal.contact.essence.MockEssencesImpl
+import net.mamoe.mirai.mock.internal.contact.roaming.MockRoamingMessages
 import net.mamoe.mirai.mock.internal.msgsrc.OnlineMsgSrcToGroup
 import net.mamoe.mirai.mock.internal.msgsrc.newMsgSrc
 import net.mamoe.mirai.mock.utils.broadcastBlocking
@@ -48,6 +52,11 @@ internal class MockGroupImpl(
 ) : AbstractMockContact(
     parentCoroutineContext, bot, id
 ), MockGroup {
+    @Deprecated(
+        "use active.changeHonorMember",
+        replaceWith = ReplaceWith(".active.changeHonorMember(member, honorType)"),
+        level = DeprecationLevel.ERROR
+    )
     override val honorMembers: MutableMap<GroupHonorType, MockNormalMember> = ConcurrentHashMap()
     private val txFileSystem by lazy { bot.mock().tmpResourceServer.mockServerFileDisk.newFsSystem() }
 
@@ -56,17 +65,6 @@ internal class MockGroupImpl(
     }
 
     override val active: MockGroupActive by lazy { MockGroupActiveImpl(this) }
-
-    override fun changeHonorMember(member: MockNormalMember, honorType: GroupHonorType) {
-        val onm = honorMembers[honorType]
-        honorMembers[honorType] = member
-        // reference net.mamoe.mirai.internal.network.notice.group.NoticePipelineContext.processGeneralGrayTip, GroupNotificationProcessor.kt#361L
-        if (honorType == GroupHonorType.TALKATIVE) {
-            if (onm != null) GroupTalkativeChangeEvent(this, member, onm).broadcastBlocking()
-        }
-        if (onm != null) MemberHonorChangeEvent.Lose(onm, honorType).broadcastBlocking()
-        MemberHonorChangeEvent.Achieve(member, honorType).broadcastBlocking()
-    }
 
     override fun appendMember(mockMember: MemberInfo): MockGroup {
         addMember(mockMember)
@@ -106,10 +104,11 @@ internal class MockGroupImpl(
     }
 
     override suspend fun changeOwner(member: NormalMember) {
+        if (member === owner) return
         val oldOwner = owner
         val oldPerm = member.permission
-        member.mock().mockApi.permission = MemberPermission.OWNER
         oldOwner.mock().mockApi.permission = MemberPermission.MEMBER
+        member.mock().mockApi.permission = MemberPermission.OWNER
         owner = member
 
         if (member === botAsMember) {
@@ -334,11 +333,15 @@ internal class MockGroupImpl(
         resource.mockUploadVoice(bot)
 
     override suspend fun setEssenceMessage(source: MessageSource): Boolean {
+        checkBotPermission(MemberPermission.ADMINISTRATOR)
+        essences.mockSetEssences(source, this.botAsMember)
         return true
     }
 
+    override val essences: MockEssences = MockEssencesImpl(this)
+
     @Deprecated("Please use files instead.", replaceWith = ReplaceWith("files.root"))
-    @Suppress("OverridingDeprecatedMember", "DEPRECATION")
+    @Suppress("OverridingDeprecatedMember", "DEPRECATION", "DEPRECATION_ERROR")
     override val filesRoot: RemoteFile by lazy {
         net.mamoe.mirai.mock.internal.remotefile.remotefile.RootRemoteFile(txFileSystem, this)
     }
@@ -353,4 +356,6 @@ internal class MockGroupImpl(
     override fun toString(): String {
         return "Group($id)"
     }
+
+    override val roamingMessages: RoamingMessages = MockRoamingMessages(this)
 }

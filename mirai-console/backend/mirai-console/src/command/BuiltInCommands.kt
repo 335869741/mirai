@@ -1,11 +1,13 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
  *
  * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
+
+@file:OptIn(ConsoleFrontEndImplementation::class)
 
 package net.mamoe.mirai.console.command
 
@@ -15,6 +17,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import net.mamoe.mirai.Bot
+import net.mamoe.mirai.console.ConsoleFrontEndImplementation
 import net.mamoe.mirai.console.MiraiConsole
 import net.mamoe.mirai.console.MiraiConsoleImplementation
 import net.mamoe.mirai.console.MiraiConsoleImplementation.ConsoleDataScope.Companion.get
@@ -35,6 +38,8 @@ import net.mamoe.mirai.console.internal.data.builtins.DataScope
 import net.mamoe.mirai.console.internal.extension.GlobalComponentStorage
 import net.mamoe.mirai.console.internal.permission.BuiltInPermissionService
 import net.mamoe.mirai.console.internal.permission.getPermittedPermissionsAndSource
+import net.mamoe.mirai.console.internal.plugin.JvmPluginInternal
+import net.mamoe.mirai.console.internal.plugin.MiraiConsoleAsPlugin
 import net.mamoe.mirai.console.internal.pluginManagerImpl
 import net.mamoe.mirai.console.internal.util.runIgnoreException
 import net.mamoe.mirai.console.permission.Permission
@@ -50,6 +55,7 @@ import net.mamoe.mirai.console.plugin.version
 import net.mamoe.mirai.console.util.*
 import net.mamoe.mirai.event.events.EventCancelledException
 import net.mamoe.mirai.utils.BotConfiguration
+import net.mamoe.mirai.utils.MiraiExperimentalApi
 import java.lang.management.ManagementFactory
 import java.lang.management.MemoryMXBean
 import java.lang.management.MemoryUsage
@@ -63,6 +69,7 @@ import kotlin.system.exitProcess
 public interface BuiltInCommand : Command
 
 // for identification
+@OptIn(ConsoleExperimentalApi::class)
 internal interface BuiltInCommandInternal : Command, BuiltInCommand
 
 /**
@@ -125,7 +132,10 @@ public object BuiltInCommands {
 
         private val closingLock = Mutex()
 
-        @OptIn(DelicateCoroutinesApi::class)
+        @OptIn(
+            DelicateCoroutinesApi::class, ConsoleFrontEndImplementation::class, ConsoleExperimentalApi::class,
+            ConsoleInternalApi::class
+        )
         @Handler
         public suspend fun CommandSender.handle() {
             GlobalScope.launch {
@@ -161,6 +171,7 @@ public object BuiltInCommands {
         description = "登出一个账号",
     ), BuiltInCommandInternal {
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Handler
         public suspend fun CommandSender.handle(
             @Name("qq") id: Long
@@ -180,6 +191,7 @@ public object BuiltInCommands {
         description = loginCommandInstance.description,
     ), BuiltInCommandInternal {
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Handler
         @JvmOverloads
         public suspend fun CommandSender.handle(
@@ -236,6 +248,7 @@ public object BuiltInCommands {
         }
 
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Description("授权一个权限")
         @SubCommand("permit", "grant", "add")
         public suspend fun CommandSender.permit(
@@ -246,6 +259,7 @@ public object BuiltInCommands {
             sendMessage("OK")
         }
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Description("撤销一个权限")
         @SubCommand("cancel", "deny", "remove")
         public suspend fun CommandSender.cancel(
@@ -256,6 +270,7 @@ public object BuiltInCommands {
             sendMessage("OK")
         }
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Description("撤销一个权限及其所有子权限")
         @SubCommand("cancelAll", "denyAll", "removeAll")
         public suspend fun CommandSender.cancelAll(
@@ -266,6 +281,7 @@ public object BuiltInCommands {
             sendMessage("OK")
         }
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Description("查看被授权权限列表")
         @SubCommand("permittedPermissions", "pp", "grantedPermissions", "gp")
         public suspend fun CommandSender.permittedPermissions(
@@ -422,11 +438,13 @@ public object BuiltInCommands {
         ConsoleCommandOwner, "autoLogin", "自动登录",
         description = "自动登录设置",
         overrideContext = buildCommandArgumentContext {
+            @OptIn(ConsoleExperimentalApi::class)
             ConfigurationKey::class with ConfigurationKey.Parser
         }
     ), BuiltInCommandInternal {
         @Description("查看自动登录账号列表")
         @SubCommand
+        @OptIn(ConsoleExperimentalApi::class)
         public suspend fun CommandSender.list() {
             val config = DataScope.get<AutoLoginConfig>()
             sendMessage(buildString {
@@ -453,6 +471,7 @@ public object BuiltInCommands {
 
         @Description("添加自动登录, passwordKind 可选 PLAIN 或 MD5")
         @SubCommand
+        @ConsoleExperimentalApi
         public suspend fun CommandSender.add(account: Long, password: String, passwordKind: PasswordKind = PLAIN) {
             val config = DataScope.get<AutoLoginConfig>()
             val accountStr = account.toString()
@@ -464,6 +483,7 @@ public object BuiltInCommands {
             sendMessage("已成功添加 '$account'.")
         }
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Description("清除所有配置")
         @SubCommand
         public suspend fun CommandSender.clear() {
@@ -472,6 +492,7 @@ public object BuiltInCommands {
             sendMessage("已清除所有自动登录配置.")
         }
 
+        @OptIn(ConsoleExperimentalApi::class)
         @Description("删除一个账号")
         @SubCommand
         public suspend fun CommandSender.remove(account: Long) {
@@ -484,6 +505,7 @@ public object BuiltInCommands {
             sendMessage("账号 '$account' 未配置自动登录.")
         }
 
+        @ConsoleExperimentalApi
         @Description("设置一个账号的一个配置项")
         @SubCommand
         public suspend fun CommandSender.setConfig(account: Long, configKey: ConfigurationKey, value: String) {
@@ -508,6 +530,7 @@ public object BuiltInCommands {
         }
 
         @Description("删除一个账号的一个配置项")
+        @ConsoleExperimentalApi
         @SubCommand
         public suspend fun CommandSender.removeConfig(account: Long, configKey: ConfigurationKey) {
             val config = DataScope.get<AutoLoginConfig>()
@@ -582,6 +605,7 @@ public object BuiltInCommands {
             val max: Long,
         )
 
+        @OptIn(MiraiExperimentalApi::class)
         @Handler
         public suspend fun CommandSender.handle() {
             sendAnsiMessage {
@@ -610,14 +634,25 @@ public object BuiltInCommands {
                 reset().append("\n\n")
 
                 append("Plugins: ")
-                if (MiraiConsole.pluginManagerImpl.resolvedPlugins.isEmpty()) {
+
+                val resolvedPlugins = MiraiConsole.pluginManagerImpl.resolvedPlugins.asSequence()
+                    .filter { it !is MiraiConsoleAsPlugin } // skip mirai-console in status
+                    .toList()
+
+                if (resolvedPlugins.isEmpty()) {
                     gray().append("<none>")
                 } else {
-                    MiraiConsole.pluginManagerImpl.resolvedPlugins.joinTo(this) { plugin ->
+                    resolvedPlugins.joinTo(this) { plugin ->
                         if (plugin.isEnabled) {
                             green().append(plugin.name).reset().append(" v").gold()
                         } else {
-                            red().append(plugin.name).append("(disabled)").reset().append(" v").gold()
+                            red().append(plugin.name)
+                            if (plugin is JvmPluginInternal) {
+                                append("(").append(plugin.currentPluginStatus.name.lowercase()).append(")")
+                            } else {
+                                append("(disabled)")
+                            }
+                            reset().append(" v").gold()
                         }
                         plugin.version.toString()
                     }
@@ -661,9 +696,11 @@ public object BuiltInCommands {
                                         v < e50 -> {
                                             green()
                                         }
+
                                         v < e90 -> {
                                             lightRed()
                                         }
+
                                         else -> {
                                             red()
                                         }

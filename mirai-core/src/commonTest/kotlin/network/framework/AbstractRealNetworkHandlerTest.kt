@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -29,6 +29,7 @@ import net.mamoe.mirai.internal.network.handler.NetworkHandler.State
 import net.mamoe.mirai.internal.network.protocol.data.jce.SvcRespRegister
 import net.mamoe.mirai.internal.network.protocol.packet.login.StatSvc
 import net.mamoe.mirai.internal.test.runBlockingUnit
+import net.mamoe.mirai.internal.utils.crypto.QQEcdh
 import net.mamoe.mirai.internal.utils.subLogger
 import net.mamoe.mirai.utils.*
 import network.framework.components.TestEventDispatcherImpl
@@ -60,8 +61,12 @@ internal abstract class AbstractRealNetworkHandlerTest<H : NetworkHandler> : Abs
     @AfterTest
     fun afterEach() {
         println("Test finished, closing Bot")
-        if (botInit) bot.close()
-        runBlockingUnit { bot.join() }
+        if (botInit) {
+            bot.close()
+            println("joining Bot")
+            runBlockingUnit { bot.join() }
+            println("cleanup ok")
+        }
     }
 
     protected open fun createBot(account: BotAccount = MockAccount): QQAndroidBot {
@@ -170,6 +175,18 @@ internal abstract class AbstractRealNetworkHandlerTest<H : NetworkHandler> : Abs
             override fun attachJob(bot: AbstractBot, scope: CoroutineScope) {
             }
         })
+
+        set(EcdhInitialPublicKeyUpdater, object : EcdhInitialPublicKeyUpdater {
+            override suspend fun refreshInitialPublicKeyAndApplyEcdh() {
+            }
+
+            override suspend fun initializeSsoSecureEcdh() {
+            }
+
+            override fun getQQEcdh(): QQEcdh = QQEcdh()
+        })
+
+        set(AccountSecretsManager, MemoryAccountSecretsManager())
         // set(StateObserver, bot.run { stateObserverChain() })
     }
 
@@ -219,7 +236,7 @@ internal fun AbstractRealNetworkHandlerTest<*>.setSsoProcessor(action: suspend S
     }
 }
 
-private fun createWLoginSigInfo(
+internal fun createWLoginSigInfo(
     uin: Long,
     creationTime: Long = currentTimeSeconds(),
     random: Random = Random(1)

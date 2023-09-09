@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -15,15 +15,17 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.descriptors.buildClassSerialDescriptor
 import kotlinx.serialization.modules.SerializersModule
 import kotlinx.serialization.modules.overwriteWith
+import kotlinx.serialization.modules.polymorphic
 import net.mamoe.mirai.Mirai
 import net.mamoe.mirai.message.MessageSerializers
-import net.mamoe.mirai.message.data.*
-import net.mamoe.mirai.utils.MiraiInternalApi
-import net.mamoe.mirai.utils.lateinitMutableProperty
-import net.mamoe.mirai.utils.map
-import net.mamoe.mirai.utils.takeElementsFrom
-import kotlin.jvm.Synchronized
+import net.mamoe.mirai.message.data.MessageChain
+import net.mamoe.mirai.message.data.MessageSource
+import net.mamoe.mirai.message.data.MessageSourceKind
+import net.mamoe.mirai.message.data.SingleMessage
+import net.mamoe.mirai.utils.*
 import kotlin.reflect.KClass
+import kotlin.reflect.full.allSuperclasses
+import kotlin.reflect.full.isSubclassOf
 
 @MiraiInternalApi
 public open class MessageSourceSerializerImpl(serialName: String) :
@@ -38,6 +40,12 @@ public open class MessageSourceSerializerImpl(serialName: String) :
             Mirai.constructMessageSource(botId, kind, fromId, targetId, ids, time, internalIds, originalMessage)
         }
     ) {
+
+    @MiraiInternalApi
+    public companion object {
+        public fun serialDataSerializer(): KSerializer<*> = SerialData.serializer()
+    }
+
     @SerialName(MessageSource.SERIAL_NAME)
     @Serializable
     internal class SerialData(
@@ -55,6 +63,7 @@ public open class MessageSourceSerializerImpl(serialName: String) :
 
 // Tests:
 // net.mamoe.mirai.internal.message.data.MessageSerializationTest
+@OptIn(MiraiExperimentalApi::class)
 internal object MessageSerializersImpl : MessageSerializers {
     private var serializersModuleField: SerializersModule by lateinitMutableProperty {
         SerializersModule { }
@@ -77,10 +86,22 @@ internal object MessageSerializersImpl : MessageSerializers {
     }
 }
 
-internal expect fun <M : Any> SerializersModule.overwritePolymorphicWith(
+internal fun <M : Any> SerializersModule.overwritePolymorphicWith(
     type: KClass<M>,
     serializer: KSerializer<M>
-): SerializersModule
+): SerializersModule {
+    return overwriteWith(SerializersModule {
+        // contextual(type, serializer)
+        for (superclass in type.allSuperclasses) {
+            if (superclass.isFinal) continue
+            if (!superclass.isSubclassOf(SingleMessage::class)) continue
+            @Suppress("UNCHECKED_CAST")
+            polymorphic(superclass as KClass<Any>) {
+                subclass(type, serializer)
+            }
+        }
+    })
+}
 
 //private inline fun <reified M : SingleMessage> SerializersModuleBuilder.hierarchicallyPolymorphic(serializer: KSerializer<M>) =
 //    hierarchicallyPolymorphic(M::class, serializer)

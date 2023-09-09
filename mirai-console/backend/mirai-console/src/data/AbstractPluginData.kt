@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -32,6 +32,7 @@ public abstract class AbstractPluginData : PluginData, PluginDataImpl() {
     /**
      * 这个 [PluginData] 保存时使用的名称.
      */
+    @ConsoleExperimentalApi
     public abstract override val saveName: String
 
     /**
@@ -66,6 +67,7 @@ public abstract class AbstractPluginData : PluginData, PluginDataImpl() {
     /**
      * 使用 `by value()` 时自动调用此方法, 添加对 [Value] 的值修改的跟踪, 并创建 [ValueNode] 加入 [valueNodes]
      */
+    @OptIn(ConsoleExperimentalApi::class)
     public operator fun <T : SerializerAwareValue<*>> T.provideDelegate(
         thisRef: Any?,
         property: KProperty<*>,
@@ -78,7 +80,7 @@ public abstract class AbstractPluginData : PluginData, PluginDataImpl() {
     public final override val updaterSerializer: KSerializer<Unit>
         get() = super.updaterSerializer
 
-    public override val serializersModule: SerializersModule get() = EmptySerializersModule
+    public override val serializersModule: SerializersModule get() = EmptySerializersModule()
     /**
      * 当所属于这个 [PluginData] 的 [Value] 的 [值][Value.value] 被修改时被调用.
      */

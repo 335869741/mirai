@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -7,11 +7,14 @@
  * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 @file:Suppress("MemberVisibilityCanBePrivate")
+@file:OptIn(ConsoleExperimentalApi::class)
 
 package net.mamoe.mirai.console.internal.plugin
 
 import net.mamoe.mirai.console.plugin.jvm.ExportManager
 import net.mamoe.mirai.console.plugin.jvm.JvmPluginClasspath
+import net.mamoe.mirai.console.plugin.jvm.JvmPluginDescription
+import net.mamoe.mirai.console.util.ConsoleExperimentalApi
 import net.mamoe.mirai.utils.*
 import org.eclipse.aether.artifact.Artifact
 import org.eclipse.aether.graph.DependencyFilter
@@ -129,7 +132,12 @@ internal class DynLibClassLoader : DynamicClasspathClassLoader {
             if (name in AllDependenciesClassesHolder.allclasses) {
                 return AllDependenciesClassesHolder.appClassLoader.loadClass(name)
             }
-            if (name.startsWith("net.mamoe.mirai.") || name.startsWith("kotlin.") || name.startsWith("kotlinx.")) { // Avoid plugin classing cheating
+            if (
+                name.startsWith("net.mamoe.mirai.")
+                || name.startsWith("kotlin.")
+                || name.startsWith("kotlinx.")
+                || name.startsWith("org.slf4j.")
+            ) { // Avoid plugin classing cheating
                 try {
                     return AllDependenciesClassesHolder.appClassLoader.loadClass(name)
                 } catch (ignored: ClassNotFoundException) {
@@ -140,6 +148,29 @@ internal class DynLibClassLoader : DynamicClasspathClassLoader {
             } catch (ignored: ClassNotFoundException) {
             }
             return null
+        }
+
+        fun tryFastOrStrictResolveResources(name: String): Enumeration<URL> {
+            if (name.startsWith("java/")) return JavaSystemPlatformClassLoader.getResources(name)
+
+            // All mirai-core hard-linked should use same version to avoid errors (ClassCastException).
+            val fromDependencies = AllDependenciesClassesHolder.appClassLoader.getResources(name)
+
+            return if (
+                name.startsWith("net/mamoe/mirai/")
+                || name.startsWith("kotlin/")
+                || name.startsWith("kotlinx/")
+                || name.startsWith("org/slf4j/")
+            ) { // Avoid plugin classing cheating
+                fromDependencies
+            } else {
+                LinkedHashSet<URL>().apply {
+                    addAll(fromDependencies)
+                    addAll(JavaSystemPlatformClassLoader.getResources(name))
+                }.let {
+                    Collections.enumeration(it)
+                }
+            }
         }
     }
 
@@ -215,6 +246,8 @@ internal class DynLibClassLoader : DynamicClasspathClassLoader {
 }
 
 internal class JvmPluginClassLoaderN : URLClassLoader {
+    var pluginDescriptionFromPluginResource: JvmPluginDescription? = null
+
     val openaccess: JvmPluginClasspath = OpenAccess()
     val file: File
     val ctx: JvmPluginsLoadingCtx
@@ -277,6 +310,33 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
                 .forEach { pkg ->
                     pluginMainPackages.add(pkg)
                 }
+
+            zipFile.getEntry("META-INF/mirai-console-plugin/options.properties")?.let { optionsEntry ->
+                runCatching {
+                    val options = Properties()
+                    zipFile.getInputStream(optionsEntry).bufferedReader().use { reader ->
+                        options.load(reader)
+                    }
+
+                    openaccess.shouldBeResolvableToIndependent = options.prop(
+                        "class.loading.be-resolvable-to-independent", "true"
+                    ) { it.toBooleanStrict() }
+
+                    openaccess.shouldResolveIndependent = options.prop(
+                        "class.loading.resolve-independent", "true"
+                    ) { it.toBooleanStrict() }
+
+                    openaccess.shouldResolveConsoleSystemResource = options.prop(
+                        "resources.resolve-console-system-resources", "false"
+                    ) { it.toBooleanStrict() }
+
+                }.onFailure { err ->
+                    throw IllegalStateException(
+                        "Exception while reading META-INF/mirai-console-plugin/options.properties",
+                        err
+                    )
+                }
+            }
         }
         pluginSharedCL = DynLibClassLoader.newInstance(
             ctx.sharedLibrariesLoader, "SharedCL{${file.name}}", "${file.name}[shared]"
@@ -420,9 +480,17 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
                 return super.findClass(name)
             }
         } catch (error: ClassNotFoundException) {
+            if (!openaccess.shouldResolveIndependent) {
+                return ctx.consoleClassLoader.loadClass(name)
+            }
+
             // Finally, try search from other plugins and console system
             ctx.pluginClassLoaders.forEach { other ->
                 if (other !== this && other !in dependencies) {
+
+                    if (!other.openaccess.shouldBeResolvableToIndependent)
+                        return@forEach
+
                     other.resolvePluginPublicClass(name)?.let {
                         if (undefinedDependencies.add(other.file.name)) {
                             linkedLogger.warning { "Linked class $name in ${other.file.name} but plugin not depend on it." }
@@ -453,13 +521,12 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
         }
         src.add(pluginIndependentCL.getResources(name))
 
-        val resolved = mutableListOf<URL>()
-        src.forEach { nested ->
-            nested.iterator().forEach { url ->
-                if (url !in resolved)
-                    resolved.add(url)
-            }
+        val resolved = LinkedHashSet<URL>()
+
+        if (openaccess.shouldResolveConsoleSystemResource) {
+            DynLibClassLoader.tryFastOrStrictResolveResources(name).let { resolved.addAll(it) }
         }
+        src.forEach { nested -> resolved.addAll(nested) }
 
         return Collections.enumeration(resolved)
     }
@@ -483,6 +550,12 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
         // Avoid loading duplicated mirai-console plugins
         if (name.startsWith("META-INF/services/net.mamoe.mirai.console.plugin."))
             return findResource(name)
+
+        if (openaccess.shouldResolveConsoleSystemResource) {
+            DynLibClassLoader.tryFastOrStrictResolveResources(name)
+                .takeIf { it.hasMoreElements() }
+                ?.let { return it.nextElement() }
+        }
 
         findResource(name)?.let { return it }
         // parent: ctx.sharedLibrariesLoader
@@ -508,6 +581,10 @@ internal class JvmPluginClassLoaderN : URLClassLoader {
             get() = pluginSharedCL
         override val pluginIndependentLibrariesClassLoader: ClassLoader
             get() = pluginIndependentCL
+
+        override var shouldResolveConsoleSystemResource: Boolean = false
+        override var shouldBeResolvableToIndependent: Boolean = true
+        override var shouldResolveIndependent: Boolean = true
 
         private val permitted by lazy {
             arrayOf(
@@ -593,5 +670,21 @@ private fun <E> compoundEnumerations(iter: Iterator<Enumeration<E>>): Enumeratio
             }
             throw NoSuchElementException()
         }
+    }
+}
+
+private fun Properties.prop(key: String, def: String): String {
+    try {
+        return getProperty(key, def)
+    } catch (err: Throwable) {
+        throw IllegalStateException("Exception while reading `$key`", err)
+    }
+}
+
+private inline fun <T> Properties.prop(key: String, def: String, dec: (String) -> T): T {
+    try {
+        return getProperty(key, def).let(dec)
+    } catch (err: Throwable) {
+        throw IllegalStateException("Exception while reading `$key`", err)
     }
 }

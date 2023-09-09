@@ -15,9 +15,11 @@ import org.gradle.api.tasks.TaskProvider
 import org.gradle.jvm.tasks.Jar
 import org.gradle.kotlin.dsl.get
 import org.gradle.kotlin.dsl.register
+import shadow.RelocationConfig
+import shadow.relocationFilters
 
-fun logPublishing(message: String) {
-    println("[Publishing] Configuring $message")
+inline fun Project.logPublishing(message: () -> String) {
+    logger.debug("[Publishing] Configuring {}", message())
 }
 
 fun Project.configureMppPublishing() {
@@ -42,10 +44,12 @@ fun Project.configureMppPublishing() {
 
     afterEvaluate {
         publishing {
-            logPublishing("Publications: ${publications.joinToString { it.name }}")
+            logPublishing { "Publications: ${publications.joinToString { it.name }}" }
 
             val (nonJvmPublications, jvmPublications) = publications.filterIsInstance<MavenPublication>()
-                .partition { publication -> tasks.findByName("relocate${publication.name.titlecase()}Dependencies") == null }
+                .partition { publication ->
+                    tasks.findByName(RelocationConfig.taskNameForRelocateDependencies(publication.name)) == null
+                }
 
             for (publication in nonJvmPublications) {
                 configureMultiplatformPublication(publication, stubJavadoc, publication.name)
@@ -76,11 +80,10 @@ fun Project.configureMppPublishing() {
                 configureMultiplatformPublication(publication, stubJavadoc, publication.name)
                 publication.apply {
                     artifacts.filter { it.classifier.isNullOrEmpty() && it.extension == "jar" }.forEach {
-                        it.builtBy(tasks.findByName("relocate${publication.name.titlecase()}Dependencies"))
+                        it.builtBy(tasks.findByName(RelocationConfig.taskNameForRelocateDependencies(publication.name)))
                     }
                 }
             }
-            configGpgSign(this@configureMppPublishing)
         }
     }
 }
@@ -94,7 +97,7 @@ private fun Project.configureMultiplatformPublication(
     publication.artifact(stubJavadoc)
     publication.setupPom(project)
 
-    logPublishing(publication.name + ": moduleName = $moduleName")
+    logPublishing { publication.name + ": moduleName = $moduleName" }
     when (moduleName) {
         "kotlinMultiplatform" -> {
             publication.artifactId = project.name
@@ -104,13 +107,148 @@ private fun Project.configureMultiplatformPublication(
             // TODO: 2021/1/30 现在添加 JVM 到 root module 会导致 Gradle 依赖无法解决
             // https://github.com/mamoe/mirai/issues/932
         }
+
         "metadata" -> { // TODO: 2021/1/21 seems no use. none `type` is "metadata"
             publication.artifactId = "${project.name}-metadata"
         }
+
+        "jvm" -> {
+            publication.artifactId = "${project.name}-$moduleName"
+
+            useRelocatedPublication(publication, moduleName)
+        }
+
         else -> {
             // "jvm", "native", "js", "common"
             publication.artifactId = "${project.name}-$moduleName"
         }
+    }
+}
+
+/**
+ * Creates a new publication and disables [publication].
+ */
+private fun Project.useRelocatedPublication(
+    publication: MavenPublication,
+    moduleName: String
+) {
+    val relocatedPublicationName = RelocationConfig.relocatedPublicationName(publication.name)
+    registerRelocatedPublication(relocatedPublicationName, publication, moduleName)
+
+    logPublishing { "Registered relocated publication `$relocatedPublicationName` for module $moduleName, for project ${project.path}" }
+
+    // Add task dependencies
+    addTaskDependenciesForRelocatedPublication(moduleName, relocatedPublicationName)
+
+    val relocateDependencies = tasks.getByName(RelocationConfig.taskNameForRelocateDependencies(moduleName))
+
+    configurePatchKotlinModuleMetadataTask(relocatedPublicationName, relocateDependencies, publication.name)
+}
+
+private fun Project.registerRelocatedPublication(
+    relocatedPublicationName: String,
+    publication: MavenPublication,
+    moduleName: String
+) {
+    // copy POM XML, since POM contains transitive dependencies
+
+    var patched = false
+
+    lateinit var oldXmlProvider: XmlProvider
+    publication.pom.withXml { oldXmlProvider = this }
+
+    publications.register(relocatedPublicationName, MavenPublication::class.java) {
+        this.artifactId = publication.artifactId
+        this.groupId = publication.groupId
+        this.version = publication.version
+        this.artifacts.addAll(publication.artifacts.filterNot { it.classifier == null && it.extension == "jar" })
+
+        project.tasks.findByName(RelocationConfig.taskNameForRelocateDependencies(moduleName))
+            ?.let { relocateDependencies ->
+                this.artifact(relocateDependencies) {
+                    this.classifier = null
+                    this.extension = "jar"
+                }
+            }
+
+        pom.withXml {
+            val newXml = this
+            for (newChild in newXml.asNode().childrenNodes()) {
+                newXml.asNode().remove(newChild)
+            }
+            // Note: `withXml` is lazy, it is evaluated only when `generatePomFileFor...`
+            for (oldChild in oldXmlProvider.asNode().childrenNodes()) {
+                newXml.asNode().append(oldChild)
+            }
+            removeDependenciesInMavenPom(this)
+            patched = true
+        }
+    }
+
+    tasks.matching { it.name.startsWith("publish${relocatedPublicationName.titlecase()}PublicationTo") }.all {
+        dependsOn("generatePomFileFor${relocatedPublicationName.titlecase()}Publication")
+    }
+
+
+    tasks.matching { it.name == "generatePomFileFor${relocatedPublicationName.titlecase()}Publication" }.all {
+        dependsOn(tasks.getByName("generatePomFileFor${publication.name.titlecase()}Publication"))
+        doLast {
+            check(patched) { "POM is not patched" }
+        }
+    }
+}
+
+private fun Project.addTaskDependenciesForRelocatedPublication(moduleName: String, relocatedPublicationName: String) {
+    val originalTaskNamePrefix = "publish${moduleName.titlecase()}PublicationTo"
+    val relocatedTaskName = "publish${relocatedPublicationName.titlecase()}PublicationTo"
+    tasks.configureEach {
+        if (!name.startsWith(originalTaskNamePrefix)) return@configureEach
+        val originalTask = this
+
+        this.enabled = false
+        this.description = "${this.description} ([mirai] disabled in favor of $relocatedTaskName)"
+
+        val relocatedTasks = project.tasks.filter { it.name.startsWith(relocatedTaskName) }.toTypedArray()
+        check(relocatedTasks.isNotEmpty()) { "relocatedTasks is empty" }
+        relocatedTasks.forEach { publishRelocatedPublication ->
+            publishRelocatedPublication.dependsOn(*this.dependsOn.toTypedArray())
+            logger.info(
+                "[Publishing] $publishRelocatedPublication now dependsOn tasks: " +
+                        this.dependsOn.joinToString()
+            )
+        }
+
+        project.tasks.filter { it.dependsOn.contains(originalTask) }
+            .forEach { it.dependsOn(*relocatedTasks) }
+    }
+}
+
+// Remove relocated dependencies in Maven pom
+private fun Project.removeDependenciesInMavenPom(xmlProvider: XmlProvider) {
+    xmlProvider.run {
+        val node = asNode().getSingleChild("dependencies")
+        val dependencies = node.childrenNodes()
+        logger.info("[Shadow Relocation] deps: {}", dependencies)
+        logger.info(
+            "[Shadow Relocation] All filter notations: {}",
+            relocationFilters.flatMap { it.notations.notations() }.joinToString("\n")
+        )
+
+        dependencies.forEach { dep ->
+            val groupId = dep.getSingleChild("groupId").value().toString().removeSurrounding("[", "]")
+            val artifactId = dep.getSingleChild("artifactId").value().toString().removeSurrounding("[", "]")
+            logger.info("[Shadow Relocation] Checking $groupId:$artifactId")
+
+            if (
+                relocationFilters.any { filter ->
+                    filter.matchesDependency(groupId = groupId, artifactId = artifactId)
+                }
+            ) {
+                logger.info("[Shadow Relocation] Filtering out '$groupId:$artifactId' from pom for project '${project.path}'")
+                check(node.remove(dep)) { "Failed to remove dependency node" }
+            }
+        }
+
     }
 }
 
@@ -124,12 +262,13 @@ val publishPlatformArtifactsInRootModule: Project.(MavenPublication) -> Unit = {
             // mirai-core\build\libs\mirai-core-2.0.0.jar, classifier=null, ext=jar
         }
 
-        logPublishing("Existing artifacts in kotlinMultiplatform: " +
-                this.artifacts.joinToString("\n", prefix = "\n") { it.smartToString() }
-        )
+        logPublishing {
+            "Existing artifacts in kotlinMultiplatform: " +
+                    this.artifacts.joinToString("\n", prefix = "\n") { it.smartToString() }
+        }
 
         platformPublication.artifacts.forEach {
-            logPublishing("Adding artifact to kotlinMultiplatform: ${it.smartToString()}")
+            logPublishing { "Adding artifact to kotlinMultiplatform: ${it.smartToString()}" }
             artifact(it)
         }
 

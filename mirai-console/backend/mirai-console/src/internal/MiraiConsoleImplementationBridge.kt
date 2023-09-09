@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -7,15 +7,20 @@
  * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 
-@file:OptIn(ConsoleExperimentalApi::class)
+@file:OptIn(
+    ConsoleExperimentalApi::class, ConsoleFrontEndImplementation::class, ConsoleInternalApi::class,
+    MiraiInternalApi::class, MiraiExperimentalApi::class
+)
 
 package net.mamoe.mirai.console.internal
 
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import me.him188.kotlin.dynamic.delegation.dynamicDelegation
 import net.mamoe.mirai.Bot
+import net.mamoe.mirai.console.ConsoleFrontEndImplementation
 import net.mamoe.mirai.console.MalformedMiraiConsoleImplementationError
 import net.mamoe.mirai.console.MiraiConsole
 import net.mamoe.mirai.console.MiraiConsoleImplementation
@@ -26,21 +31,27 @@ import net.mamoe.mirai.console.command.ConsoleCommandSender
 import net.mamoe.mirai.console.command.descriptor.ExperimentalCommandDescriptors
 import net.mamoe.mirai.console.command.parse.SpaceSeparatedCommandCallParser
 import net.mamoe.mirai.console.command.resolve.BuiltInCommandCallResolver
+import net.mamoe.mirai.console.events.AutoLoginEvent
+import net.mamoe.mirai.console.events.StartupEvent
 import net.mamoe.mirai.console.extensions.CommandCallParserProvider
 import net.mamoe.mirai.console.extensions.CommandCallResolverProvider
 import net.mamoe.mirai.console.extensions.PermissionServiceProvider
 import net.mamoe.mirai.console.extensions.PostStartupExtension
+import net.mamoe.mirai.console.internal.auth.ConsoleSecretsCalculator
 import net.mamoe.mirai.console.internal.command.CommandConfig
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.ConfigurationKey
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.PasswordKind.MD5
 import net.mamoe.mirai.console.internal.data.builtins.AutoLoginConfig.Account.PasswordKind.PLAIN
 import net.mamoe.mirai.console.internal.data.builtins.DataScope
+import net.mamoe.mirai.console.internal.data.builtins.LoggerConfig
 import net.mamoe.mirai.console.internal.data.builtins.PluginDependenciesConfig
+import net.mamoe.mirai.console.internal.enduserreadme.EndUserReadmeProcessor
 import net.mamoe.mirai.console.internal.extension.GlobalComponentStorage
 import net.mamoe.mirai.console.internal.extension.GlobalComponentStorageImpl
 import net.mamoe.mirai.console.internal.logging.LoggerControllerImpl
 import net.mamoe.mirai.console.internal.logging.MiraiConsoleLogger
+import net.mamoe.mirai.console.internal.logging.externalbind.slf4j.MiraiConsoleSLF4JAdapter
 import net.mamoe.mirai.console.internal.permission.BuiltInPermissionService
 import net.mamoe.mirai.console.internal.plugin.PluginManagerImpl
 import net.mamoe.mirai.console.internal.shutdown.ShutdownDaemon
@@ -51,11 +62,9 @@ import net.mamoe.mirai.console.permission.PermissionService.Companion.permit
 import net.mamoe.mirai.console.permission.RootPermission
 import net.mamoe.mirai.console.plugin.PluginManager
 import net.mamoe.mirai.console.plugin.name
-import net.mamoe.mirai.console.util.AnsiMessageBuilder
-import net.mamoe.mirai.console.util.ConsoleExperimentalApi
-import net.mamoe.mirai.console.util.ConsoleInput
-import net.mamoe.mirai.console.util.SemVersion
+import net.mamoe.mirai.console.util.*
 import net.mamoe.mirai.console.util.cast
+import net.mamoe.mirai.event.broadcast
 import net.mamoe.mirai.utils.*
 import java.time.Instant
 import java.time.ZoneId
@@ -93,6 +102,9 @@ internal class MiraiConsoleImplementationBridge(
     // tentative workaround for https://github.com/mamoe/mirai/pull/1889#pullrequestreview-887903183
     @Volatile
     var permissionSeviceLoaded: Boolean = false
+
+    // For protect account.secrets in console with non-password login
+    lateinit var consoleSecretsCalculator: ConsoleSecretsCalculator
 
     // MiraiConsoleImplementation define: get() = LoggerControllerImpl()
     // Need to cache it or else created every call.
@@ -158,13 +170,12 @@ internal class MiraiConsoleImplementationBridge(
             "MiraiLogger.Factory.create(yourClass::class, identity)",
             "net.mamoe.mirai.utils.MiraiLogger"
         ),
-        level = DeprecationLevel.WARNING
+        level = DeprecationLevel.ERROR
     )
     override fun createLogger(identity: String?): MiraiLogger {
         return MiraiLogger.Factory.create(MiraiConsole::class, identity)
     }
 
-    @Suppress("RemoveRedundantBackticks")
     internal fun doStart() {
         externalImplementation.preStart()
 
@@ -209,7 +220,7 @@ ___  ____           _   _____                       _
                         */
                         append("\n\n")
 
-                        val textA = """[ Mirai consosle $version ]"""
+                        val textA = """[ Mirai console $version ]"""
                         val logoLength = 94
                         lightBlue()
                         val barlength = logoLength - textA.length
@@ -268,12 +279,25 @@ ___  ____           _   _____                       _
             val loggerController = loggerController
             if (loggerController is LoggerControllerImpl) {
                 consoleDataScope.addAndReloadConfig(loggerController.loggerConfig)
+            } else {
+                consoleDataScope.addAndReloadConfig(LoggerConfig())
             }
             consoleDataScope.reloadAll()
+            if (loggerController is LoggerControllerImpl) {
+                loggerController.onReload()
+            }
+        }
+
+        phase("initialize logging bridges") {
+            MiraiConsoleSLF4JAdapter.doSlf4JInit()
         }
 
         phase("initialize all plugins") {
             pluginManager // init
+
+            consoleSecretsCalculator = ConsoleSecretsCalculator(
+                pluginManager.pluginsDataPath.resolve("Console/console-secrets.key")
+            ).also { it.consoleKey }
 
             mainLogger.verbose { "Loading JVM plugins..." }
             pluginManager.loadAllPluginsUsingBuiltInLoaders()
@@ -342,6 +366,10 @@ ___  ____           _   _____                       _
             mainLogger.info { "${pluginManager.plugins.count { it.isEnabled }} plugin(s) enabled." }
         }
 
+        phase("end-user-readme") {
+            EndUserReadmeProcessor.process(this)
+        }
+
         phase("auto-login bots") {
             runBlocking {
                 val config = DataScope.get<AutoLoginConfig>()
@@ -399,16 +427,35 @@ ___  ____           _   _____                       _
                         }
                     }
 
-                    runCatching { bot.login() }.getOrElse {
+                    runCatching {
+                        bot.login()
+                    }.onSuccess {
+                        launch {
+                            AutoLoginEvent.Success(bot = bot).broadcast()
+                        }
+                    }.onFailure {
                         mainLogger.error(it)
-                        bot.close()
+
+                        runCatching {
+                            bot.close()
+                        }.onFailure { err ->
+                            mainLogger.error("Error in closing bot", err)
+                        }
+
+                        launch {
+                            AutoLoginEvent.Failure(bot = bot, cause = it).broadcast()
+                        }
                     }
                 }
 
             }
         }
 
+        val startuped = currentTimeSeconds()
         phase("finally post") {
+            launch {
+                StartupEvent(timestamp = startuped).broadcast()
+            }
             globalComponentStorage.useEachExtensions(PostStartupExtension) { it.invoke() }
         }
 

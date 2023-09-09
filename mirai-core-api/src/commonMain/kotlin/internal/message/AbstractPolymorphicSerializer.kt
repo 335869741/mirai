@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -7,12 +7,11 @@
  * https://github.com/mamoe/mirai/blob/dev/LICENSE
  */
 
+@file:OptIn(ExperimentalSerializationApi::class)
+
 package net.mamoe.mirai.internal.message
 
-import kotlinx.serialization.DeserializationStrategy
-import kotlinx.serialization.KSerializer
-import kotlinx.serialization.SerializationException
-import kotlinx.serialization.SerializationStrategy
+import kotlinx.serialization.*
 import kotlinx.serialization.encoding.*
 import net.mamoe.mirai.utils.cast
 import kotlin.jvm.JvmName
@@ -77,14 +76,14 @@ internal abstract class AbstractPolymorphicSerializer<T : Any> internal construc
     open fun findPolymorphicSerializerOrNull(
         decoder: CompositeDecoder,
         klassName: String?
-    ): DeserializationStrategy<out T>? = decoder.serializersModule.getPolymorphic(baseClass, klassName)
+    ): DeserializationStrategy<T>? = decoder.serializersModule.getPolymorphic(baseClass, klassName)
 
 
     /**
      * Lookups an actual serializer for given [value] within the current [base class][baseClass].
      * May use context from the [encoder].
      */
-    public open fun findPolymorphicSerializerOrNull(
+    open fun findPolymorphicSerializerOrNull(
         encoder: Encoder,
         value: T
     ): SerializationStrategy<T>? =
@@ -95,7 +94,7 @@ internal abstract class AbstractPolymorphicSerializer<T : Any> internal construc
 internal fun <T : Any> AbstractPolymorphicSerializer<T>.findPolymorphicSerializer(
     decoder: CompositeDecoder,
     klassName: String?
-): DeserializationStrategy<out T> =
+): DeserializationStrategy<T> =
     findPolymorphicSerializerOrNull(decoder, klassName) ?: throwSubtypeNotRegistered(klassName, baseClass)
 
 internal fun <T : Any> AbstractPolymorphicSerializer<T>.findPolymorphicSerializer(

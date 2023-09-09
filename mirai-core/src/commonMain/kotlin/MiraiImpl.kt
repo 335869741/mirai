@@ -59,6 +59,7 @@ import net.mamoe.mirai.internal.network.protocol.packet.chat.voice.PttStore
 import net.mamoe.mirai.internal.network.protocol.packet.list.FriendList
 import net.mamoe.mirai.internal.network.protocol.packet.login.StatSvc
 import net.mamoe.mirai.internal.network.protocol.packet.summarycard.SummaryCard
+import net.mamoe.mirai.internal.network.psKey
 import net.mamoe.mirai.internal.network.sKey
 import net.mamoe.mirai.internal.utils.MiraiProtocolInternal
 import net.mamoe.mirai.internal.utils.crypto.TEA
@@ -71,6 +72,13 @@ import kotlin.jvm.JvmName
 internal fun getMiraiImpl() = Mirai as MiraiImpl
 
 internal expect fun createDefaultHttpClient(): HttpClient
+
+// used by `net.mamoe.mirai.deps.test.CoreDependencyResolutionTest` in mirai-deps-test module. Do not change signature.
+@Suppress("unused")
+@TestOnly
+internal fun testHttpClient() {
+    createDefaultHttpClient().close()
+}
 
 @Suppress("FunctionName")
 internal expect fun _MiraiImpl_static_init()
@@ -602,7 +610,7 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
                 // ktor bug
                 append(
                     "cookie",
-                    "uin=o${bot.id}; skey=${bot.sKey};"
+                    "uin=o${bot.id}; skey=${bot.sKey}; p_uin=o${bot.id}; p_skey=${bot.psKey(host)};"
                 )
             }
         }.bodyAsText()
@@ -636,8 +644,10 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
     }
 
     override suspend fun sendNudge(bot: Bot, nudge: Nudge, receiver: Contact): Boolean {
-        if ((bot.configuration.protocol != BotConfiguration.MiraiProtocol.ANDROID_PHONE) && (bot.configuration.protocol != BotConfiguration.MiraiProtocol.IPAD)) {
-            throw UnsupportedOperationException("nudge is supported only with protocol ANDROID_PHONE or IPAD")
+        if (!bot.configuration.protocol.isNudgeSupported) {
+            throw UnsupportedOperationException("nudge is supported only with protocol ${
+                MiraiProtocolInternal.protocols.filter { it.value.supportsNudge }.map { it.key }
+            }")
         }
         bot.asQQAndroidBot()
 
@@ -715,9 +725,7 @@ internal open class MiraiImpl : IMirai, LowLevelApiAccessor {
             it.fileName to it.buffer.loadAs(MsgTransmit.PbMultiMsgNew.serializer())
         }
         val main = pbs["MultiMsg"] ?: return this.msg.map { it.toNode(bot, EmptyRefineContext) }
-        val context = SimpleRefineContext(mutableMapOf())
-        context[ForwardMessageInternal.MsgTransmits] = pbs
-        return main.toForwardMessageNodes(bot, context)
+        return main.toForwardMessageNodes(bot, SimpleRefineContext(ForwardMessageInternal.MsgTransmits to pbs))
     }
 
     private suspend fun MsgComm.Msg.toNode(bot: Bot, refineContext: RefineContext): ForwardMessage.Node {

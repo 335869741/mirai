@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -17,6 +17,7 @@ import net.mamoe.mirai.console.internal.extension.GlobalComponentStorage
 import net.mamoe.mirai.console.internal.extension.SingletonExtensionSelectorImpl
 import net.mamoe.mirai.console.plugin.Plugin
 import net.mamoe.mirai.console.plugin.name
+import net.mamoe.mirai.console.util.ConsoleInternalApi
 import net.mamoe.mirai.utils.DeprecatedSinceMirai
 import net.mamoe.mirai.utils.info
 import kotlin.reflect.KClass
@@ -28,9 +29,9 @@ import kotlin.reflect.KClass
  */
 @Deprecated(
     "Order of extensions is now determined by its priority property since 2.11. SingletonExtensionSelector is not needed anymore. ",
-    level = DeprecationLevel.ERROR
+    level = DeprecationLevel.HIDDEN
 )
-@DeprecatedSinceMirai(warningSince = "2.11", errorSince = "2.13")
+@DeprecatedSinceMirai(warningSince = "2.11", errorSince = "2.13", hiddenSince = "2.14")
 @Suppress("DEPRECATION_ERROR")
 public interface SingletonExtensionSelector : FunctionExtension {
     /**
@@ -38,9 +39,9 @@ public interface SingletonExtensionSelector : FunctionExtension {
      */
     @Deprecated(
         "Order of extensions is now determined by its priority property since 2.11. SingletonExtensionSelector is not needed anymore. ",
-        level = DeprecationLevel.ERROR
+        level = DeprecationLevel.HIDDEN
     )
-    @DeprecatedSinceMirai(warningSince = "2.11", errorSince = "2.13")
+    @DeprecatedSinceMirai(warningSince = "2.11", errorSince = "2.13", hiddenSince = "2.14")
     public data class Registry<T : Extension>(
         val plugin: Plugin?,
         val extension: T,
@@ -56,9 +57,9 @@ public interface SingletonExtensionSelector : FunctionExtension {
 
     @Deprecated(
         "Order of extensions is now determined by its priority property since 2.11. SingletonExtensionSelector is not needed anymore. ",
-        level = DeprecationLevel.ERROR
+        level = DeprecationLevel.HIDDEN
     )
-    @DeprecatedSinceMirai(warningSince = "2.11", errorSince = "2.13")
+    @DeprecatedSinceMirai(warningSince = "2.11", errorSince = "2.13", hiddenSince = "2.14")
     public companion object ExtensionPoint :
         AbstractExtensionPoint<SingletonExtensionSelector>(SingletonExtensionSelector::class) {
 
@@ -66,9 +67,10 @@ public interface SingletonExtensionSelector : FunctionExtension {
 
         internal val instance: SingletonExtensionSelector get() = instanceField ?: error("")
 
+        @OptIn(ConsoleInternalApi::class)
         internal fun init() {
             check(instanceField == null) { "Internal error: reinitialize SingletonExtensionSelector" }
-            val instances = GlobalComponentStorage.getExtensions(ExtensionPoint).toList()
+            val instances = GlobalComponentStorage.getExtensions<SingletonExtensionSelector>(ExtensionPoint).toList()
             instanceField = when {
                 instances.isEmpty() -> SingletonExtensionSelectorImpl
                 instances.size == 1 -> {
@@ -76,6 +78,7 @@ public interface SingletonExtensionSelector : FunctionExtension {
                         MiraiConsole.mainLogger.info { "Loaded SingletonExtensionSelector: ${registry.extension} from ${registry.plugin?.name ?: "<builtin>"}" }
                     }.extension
                 }
+
                 else -> {
                     val hint = instances.joinToString { reg ->
                         "'${reg.extension}' from '${reg.plugin?.name ?: "<builtin>"}'"

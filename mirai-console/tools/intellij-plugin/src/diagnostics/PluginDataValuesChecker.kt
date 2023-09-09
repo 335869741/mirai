@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -24,6 +24,7 @@ import org.jetbrains.kotlin.idea.inspections.collections.isCalling
 import org.jetbrains.kotlin.idea.project.builtIns
 import org.jetbrains.kotlin.idea.refactoring.fqName.fqName
 import org.jetbrains.kotlin.js.descriptorUtils.getJetTypeFqName
+import org.jetbrains.kotlin.js.descriptorUtils.getKotlinTypeFqName
 import org.jetbrains.kotlin.psi.*
 import org.jetbrains.kotlin.psi.psiUtil.containingClassOrObject
 import org.jetbrains.kotlin.resolve.calls.checkers.CallChecker
@@ -109,7 +110,7 @@ class PluginDataValuesChecker : CallChecker, DeclarationChecker {
         context: CallCheckerContext
     ) {
         val classDescriptor = type.classDescriptor() ?: return
-        val jetTypeFqn = type.getJetTypeFqName(false)
+        val jetTypeFqn = type.getKotlinTypeFqName(false)
 
         val builtIns = callExpr.builtIns
         val factory = when {
@@ -177,7 +178,8 @@ class PluginDataValuesChecker : CallChecker, DeclarationChecker {
 }
 
 private fun canBeSerializedInternally(descriptor: ClassDescriptor): Boolean {
-    @Suppress("UNUSED_VARIABLE") val name = when (descriptor.defaultType.getJetTypeFqName(false)) {
+    @Suppress("UNUSED_VARIABLE")
+    val name = when (descriptor.defaultType.getKotlinTypeFqName(false)) {
         // kotlinx.serialization
         "kotlin.Unit" -> "UnitSerializer"
         "Z", "kotlin.Boolean" -> "BooleanSerializer"
@@ -194,6 +196,7 @@ private fun canBeSerializedInternally(descriptor: ClassDescriptor): Boolean {
         "kotlin.collections.Collection", "kotlin.collections.List",
         "kotlin.collections.ArrayList", "kotlin.collections.MutableList",
         -> "ArrayListSerializer"
+
         "kotlin.collections.Set", "kotlin.collections.LinkedHashSet", "kotlin.collections.MutableSet" -> "LinkedHashSetSerializer"
         "kotlin.collections.HashSet" -> "HashSetSerializer"
         "kotlin.collections.Map", "kotlin.collections.LinkedHashMap", "kotlin.collections.MutableMap" -> "LinkedHashMapSerializer"
@@ -231,4 +234,3 @@ private fun canBeSerializedInternally(descriptor: ClassDescriptor): Boolean {
     }
     return true
 }
-

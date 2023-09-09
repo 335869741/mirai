@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -9,6 +9,7 @@
 @file:Suppress("UNUSED_VARIABLE")
 
 import BinaryCompatibilityConfigurator.configureBinaryValidators
+import shadow.relocateCompileOnly
 
 plugins {
     kotlin("multiplatform")
@@ -27,10 +28,9 @@ description = "Mirai API module"
 
 kotlin {
     explicitApi()
-    configureJvmTargetsHierarchical()
+    apply(plugin = "explicit-api")
 
-    configureNativeTargetsHierarchical(project)
-
+    configureJvmTargetsHierarchical("net.mamoe.mirai")
 
     sourceSets {
         val commonMain by getting {
@@ -43,7 +43,17 @@ kotlin {
                 implementation(project(":mirai-core-utils"))
                 implementation(project(":mirai-console-compiler-annotations"))
                 implementation(`kotlinx-serialization-protobuf`)
-                implementation(`ktor-io`)
+                implementation(`kotlinx-atomicfu`)
+                implementation(`jetbrains-annotations`)
+
+                // runtime from mirai-core-utils
+                relocateCompileOnly(`ktor-io_relocated`)
+
+                implementation(`kotlin-jvm-blocking-bridge`)
+                implementation(`kotlin-dynamic-delegation`)
+
+                implementation(`log4j-api`)
+                compileOnly(`slf4j-api`)
             }
         }
 
@@ -51,21 +61,15 @@ kotlin {
             dependencies {
                 runtimeOnly(`log4j-core`)
                 implementation(`kotlinx-coroutines-test`)
+                api(`junit-jupiter-api`)
             }
         }
 
-        findByName("jvmBaseMain")?.apply {
-            dependencies {
-                implementation(`jetbrains-annotations`)
-                implementation(`log4j-api`)
-                compileOnly(`slf4j-api`)
-            }
-        }
-
-        findByName("androidMain")?.apply {
-            dependsOn(commonMain)
-            dependencies {
-                compileOnly(`android-runtime`)
+        afterEvaluate {
+            findByName("androidUnitTest")?.apply {
+                dependencies {
+                    runtimeOnly(`slf4j-api`)
+                }
             }
         }
 
@@ -78,12 +82,11 @@ kotlin {
                 runtimeOnly(files("build/classes/kotlin/jvm/test")) // classpath is not properly set by IDE
             }
         }
-
-        findByName("nativeMain")?.apply {
-            dependencies {
-            }
-        }
     }
+}
+
+atomicfu {
+    transformJvm = false
 }
 
 if (tasks.findByName("androidMainClasses") != null) {
@@ -98,12 +101,11 @@ if (tasks.findByName("androidMainClasses") != null) {
         group = "verification"
         this.mustRunAfter("androidMainClasses")
     }
-    tasks.getByName("androidTest").dependsOn("checkAndroidApiLevel")
+    tasks.findByName("androidTest")?.dependsOn("checkAndroidApiLevel")
 }
 
 configureMppPublishing()
 configureBinaryValidators(setOf("jvm", "android").filterTargets())
-relocateKtorForCore(false)
 
 //mavenCentralPublish {
 //    artifactId = "mirai-core-api"

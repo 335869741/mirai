@@ -12,13 +12,15 @@
 package net.mamoe.mirai.console.internal.plugin
 
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Job
+import kotlinx.coroutines.job
 import net.mamoe.mirai.console.MiraiConsole
 import net.mamoe.mirai.console.extensions.PluginLoaderProvider
 import net.mamoe.mirai.console.internal.data.mkdir
 import net.mamoe.mirai.console.internal.extension.GlobalComponentStorage
+import net.mamoe.mirai.console.plugin.NotYetLoadedPlugin
 import net.mamoe.mirai.console.plugin.Plugin
 import net.mamoe.mirai.console.plugin.PluginManager
+import net.mamoe.mirai.console.plugin.PluginManager.INSTANCE.description
 import net.mamoe.mirai.console.plugin.PluginManager.INSTANCE.safeLoader
 import net.mamoe.mirai.console.plugin.description.PluginDependency
 import net.mamoe.mirai.console.plugin.description.PluginDescription
@@ -74,13 +76,21 @@ internal class PluginManagerImpl(
         plugin.safeLoader.getPluginDescription(plugin)
 
     init {
-        MiraiConsole.coroutineContext[Job]!!.invokeOnCompletion {
+        // Kotlin coroutine job cancelling ordering:
+        // - sub job 0 invokeOnCompletion called
+        // - sub job 1 invokeOnCompletion called
+        // - sub job N invokeOnCompletion called
+        // - parent    invokeOnCompletion called
+        // So we need register a child job to control plugins' disabling order
+        this.childScopeContext("PluginManager shutdown monitor").job.invokeOnCompletion {
             plugins.asReversed().forEach { plugin ->
                 if (plugin.isEnabled) {
                     disablePlugin(plugin)
                 }
             }
         }
+
+        resolvedPlugins.add(MiraiConsoleAsPlugin)
     }
 
     // region LOADING
@@ -88,7 +98,15 @@ internal class PluginManagerImpl(
     private fun <P : Plugin, D : PluginDescription> PluginLoader<P, D>.loadPluginNoEnable(plugin: P) {
         kotlin.runCatching {
             this.load(plugin)
-            resolvedPlugins.add(plugin)
+
+            resolvedPlugins.add(
+                when (plugin) {
+                    is NotYetLoadedPlugin<*> -> plugin.resolve()
+
+                    else -> plugin
+                }
+            )
+
         }.fold(
             onSuccess = {
                 logger.info { "Successfully loaded plugin ${getPluginDescription(plugin).smartToString()}" }
@@ -192,6 +210,8 @@ internal class PluginManagerImpl(
 
     @Throws(PluginResolutionException::class)
     private fun <D : PluginDescription> List<D>.sortByDependencies(): List<D> {
+        val alreadyLoadedPlugins = resolvedPlugins.asSequence().map { it.description }.toList() // snapshot
+
         val originPluginDescriptions = this@sortByDependencies
         val pending2BeResolved = originPluginDescriptions.toMutableList()
         val resolved = ArrayList<D>(pending2BeResolved.size)
@@ -237,6 +257,8 @@ internal class PluginManagerImpl(
             pending2BeResolved.forEach { pluginDesc ->
                 val missed = pluginDesc.dependencies.filter { dependency ->
                     val resolvedDep = originPluginDescriptions.findDependency(dependency)
+                        ?: alreadyLoadedPlugins.findDependency(dependency)
+
                     if (resolvedDep != null) {
                         resolvedDep.checkSatisfies(dependency, pluginDesc)
                         false

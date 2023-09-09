@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -13,6 +13,7 @@
     "FunctionName", "INVISIBLE_REFERENCE", "INVISIBLE_MEMBER", "DEPRECATION_ERROR",
     "MemberVisibilityCanBePrivate"
 )
+@file:OptIn(MiraiInternalApi::class)
 
 package net.mamoe.mirai.event.events
 
@@ -20,6 +21,7 @@ import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.Mirai
 import net.mamoe.mirai.contact.*
+import net.mamoe.mirai.contact.announcement.Announcements
 import net.mamoe.mirai.data.GroupHonorType
 import net.mamoe.mirai.event.AbstractEvent
 import net.mamoe.mirai.event.BroadcastControllable
@@ -189,9 +191,13 @@ public data class GroupNameChangeEvent @MiraiInternalApi constructor(
 
 /**
  * 入群公告改变. 此事件广播前修改就已经完成.
+ *
+ * ## 已弃用
+ *
+ * 本事件不会再被触发. 无替代方法获知入群公告改变事件. 可使用 [Announcements] 主动获取所有公告列表.
  */
-@DeprecatedSinceMirai(warningSince = "2.12")
-@Deprecated("This event is not being triggered anymore.", level = DeprecationLevel.WARNING)
+@DeprecatedSinceMirai(warningSince = "2.12", errorSince = "2.14")
+@Deprecated("This event is not being triggered anymore.", level = DeprecationLevel.ERROR)
 public data class GroupEntranceAnnouncementChangeEvent @MiraiInternalApi constructor(
     public override val origin: String,
     public override val new: String,
@@ -332,7 +338,6 @@ public sealed class MemberLeaveEvent : GroupMemberEvent, AbstractEvent(), GroupM
 /**
  * [Bot] 被邀请加入一个群.
  */
-@Suppress("DEPRECATION")
 public data class BotInvitedJoinGroupRequestEvent @MiraiInternalApi constructor(
     public override val bot: Bot,
     /**

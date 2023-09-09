@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -72,6 +72,7 @@ public val Mirai: IMirai
  *
  * @see Mirai 获取实例
  */
+@OptIn(LowLevelApi::class, MiraiExperimentalApi::class)
 @NotStableForInheritance
 public interface IMirai : LowLevelApiAccessor {
     /**
@@ -89,16 +90,6 @@ public interface IMirai : LowLevelApiAccessor {
      * @see FileCacheStrategy
      */
     public var FileCacheStrategy: FileCacheStrategy
-
-//    /**
-//     * Mirai 上传好友图片等使用的 Ktor [HttpClient].
-//     * 默认使用 [OkHttp] 引擎, 连接超时为 30s.
-//     *
-//     * 覆盖后将会立即应用到全局.
-//     */
-//    @Deprecated("Mirai is not going to use ktor. This is deprecated for removal.", level = DeprecationLevel.WARNING)
-//    @DeprecatedSinceMirai(warningSince = "2.11.0")
-//    public var Http: HttpClient
 
     /**
      * 获取 uin.
@@ -207,6 +198,8 @@ public interface IMirai : LowLevelApiAccessor {
 
     /**
      * 查询某个用户的信息
+     *
+     * 此函数不会缓存信息. 每次调用此函数都会向服务器查询新信息.
      *
      * @since 2.1
      */

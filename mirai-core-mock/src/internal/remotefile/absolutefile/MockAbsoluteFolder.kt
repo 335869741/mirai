@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -47,16 +47,29 @@ private fun MockServerRemoteFile.toMockAbsFile(
     sha1: ByteArray = byteArrayOf()
 ): AbsoluteFile {
     val parent = this.parent.toMockAbsFolder(files)
-    // todo md5 and sha
-    return MockAbsoluteFile(
-        sha1,
-        md5,
-        files,
-        parent,
-        this.id,
-        this.name,
-        parent.absolutePath.removeSuffix("/") + "/" + this.name
-    )
+    return if (md5.isEmpty() || sha1.isEmpty()) {
+        asExternalResource().use { res ->
+            MockAbsoluteFile(
+                if (sha1.isEmpty()) res.sha1 else sha1,
+                if (md5.isEmpty()) res.md5 else md5,
+                files,
+                parent,
+                this.id,
+                this.name,
+                parent.absolutePath.removeSuffix("/") + "/" + this.name
+            )
+        }
+    } else {
+        MockAbsoluteFile(
+            sha1,
+            md5,
+            files,
+            parent,
+            this.id,
+            this.name,
+            parent.absolutePath.removeSuffix("/") + "/" + this.name
+        )
+    }
 }
 
 internal open class MockAbsoluteFolder(
@@ -150,9 +163,11 @@ internal open class MockAbsoluteFolder(
         if (path.isBlank()) throw IllegalArgumentException("path cannot be blank.")
         if (!FileSystem.isLegal(path)) return emptyFlow()
         if (path[0] == '/') return files.root.resolveFiles(path.removePrefix("/"))
-        return files.fileSystem.findByPath(absolutePath.removeSuffix("/") + "/" + path.removePrefix("/")).map {
-            it.toMockAbsFile(files)
-        }.asFlow()
+        return files.fileSystem.findByPath(absolutePath.removeSuffix("/") + "/" + path.removePrefix("/"))
+            .filter { it.isFile }
+            .map {
+                it.toMockAbsFile(files)
+            }.asFlow()
     }
 
     @JavaFriendlyAPI

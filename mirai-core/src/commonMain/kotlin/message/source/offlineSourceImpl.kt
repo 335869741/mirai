@@ -16,7 +16,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.Transient
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.internal.message.MessageSourceSerializerImpl
-import net.mamoe.mirai.internal.message.protocol.MessageProtocolFacade
+import net.mamoe.mirai.internal.message.RefineContextKey
+import net.mamoe.mirai.internal.message.SimpleRefineContext
 import net.mamoe.mirai.internal.message.toMessageChainNoSource
 import net.mamoe.mirai.internal.network.protocol.data.proto.ImMsgBody
 import net.mamoe.mirai.internal.network.protocol.data.proto.MsgComm
@@ -27,7 +28,6 @@ import net.mamoe.mirai.message.data.MessageSource
 import net.mamoe.mirai.message.data.MessageSourceKind
 import net.mamoe.mirai.message.data.OfflineMessageSource
 import net.mamoe.mirai.message.data.visitor.MessageVisitor
-import net.mamoe.mirai.utils.EMPTY_BYTE_ARRAY
 import net.mamoe.mirai.utils.isSameType
 import net.mamoe.mirai.utils.mapToIntArray
 
@@ -66,20 +66,9 @@ internal class OfflineMessageSourceImplData(
     override fun setRecalled(): Boolean = _isRecalledOrPlanned.compareAndSet(expect = false, update = true)
 
     override fun toJceData(): ImMsgBody.SourceMsg {
-        return jceData ?: ImMsgBody.SourceMsg(
-            origSeqs = sequenceIds,
-            senderUin = fromId,
-            toUin = 0,
-            flag = 1,
-            elems = originElems ?: MessageProtocolFacade.encode(
-                originalMessage, messageTarget = null, //forGroup = kind == MessageSourceKind.GROUP,
-                withGeneralFlags = false
-            ),
-            type = 0,
-            time = time,
-            pbReserve = EMPTY_BYTE_ARRAY,
-            srcMsg = EMPTY_BYTE_ARRAY
-        ).also { jceData = it }
+        jceData?.let { return it }
+
+        return toJceDataImpl(null).also { jceData = it }
     }
 
     override fun equals(other: Any?): Boolean {
@@ -120,6 +109,15 @@ internal class OfflineMessageSourceImplData(
     }
 }
 
+private fun IntArray.fixIds(kind: MessageSourceKind): IntArray {
+    if (kind == MessageSourceKind.FRIEND) {
+        for (idx in this.indices) {
+            this[idx] = this[idx].and(0xFFFF)
+        }
+    }
+    return this
+}
+
 internal fun OfflineMessageSourceImplData(
     bot: Bot,
     delegate: List<MsgComm.Msg>,
@@ -136,7 +134,7 @@ internal fun OfflineMessageSourceImplData(
             groupIdOrZero = head.groupInfo?.groupCode ?: 0,
             messageSourceKind = kind
         ),
-        ids = delegate.mapToIntArray { it.msgHead.msgSeq },
+        ids = delegate.mapToIntArray { it.msgHead.msgSeq }.fixIds(kind),
         internalIds = delegate.mapToIntArray { it.msgHead.msgUid.toInt() },
         botId = bot.id
     ).apply {
@@ -166,19 +164,31 @@ internal fun OfflineMessageSourceImplData(
     it.originalMessage // initialize lazy, to make isOriginalMessageInitialized true.
 }
 
+@Suppress("LocalVariableName")
 internal fun OfflineMessageSourceImplData(
     delegate: ImMsgBody.SourceMsg,
     bot: Bot,
-    messageSourceKind: MessageSourceKind,
-    groupIdOrZero: Long,
+    _messageSourceKind: MessageSourceKind,
+    _groupIdOrZero: Long,
 ): OfflineMessageSourceImplData {
+    var messageSourceKind = _messageSourceKind
+    var groupIdOrZero = _groupIdOrZero
+
+    if (messageSourceKind != MessageSourceKind.GROUP && delegate.troopName.isNotEmpty()) { // FROM GROUP: 单独回复
+        messageSourceKind = MessageSourceKind.GROUP
+        groupIdOrZero = 0
+    }
+
     return OfflineMessageSourceImplData(
         kind = messageSourceKind,
-        ids = delegate.origSeqs,
+        ids = delegate.origSeqs.fixIds(messageSourceKind),
         internalIds = delegate.pbReserve.loadAs(SourceMsg.ResvAttr.serializer())
             .origUids?.mapToIntArray { it.toInt() } ?: intArrayOf(),
         time = delegate.time,
-        originalMessageLazy = lazy { delegate.toMessageChainNoSource(bot, messageSourceKind, groupIdOrZero) },
+        originalMessageLazy = lazy {
+            val context = SimpleRefineContext(RefineContextKey.FromId to delegate.senderUin)
+            delegate.toMessageChainNoSource(bot, messageSourceKind, groupIdOrZero, context)
+        },
         fromId = delegate.senderUin,
         targetId = when {
             groupIdOrZero != 0L -> groupIdOrZero
@@ -186,6 +196,7 @@ internal fun OfflineMessageSourceImplData(
             delegate.srcMsg != null -> runCatching {
                 delegate.srcMsg.loadAs(MsgComm.Msg.serializer()).msgHead.toUin
             }.getOrElse { 0L }
+
             else -> 0/*error("cannot find targetId. delegate=${delegate._miraiContentToString()}, delegate.srcMsg=${
             kotlin.runCatching { delegate.srcMsg?.loadAs(MsgComm.Msg.serializer())?._miraiContentToString() }
                 .fold(

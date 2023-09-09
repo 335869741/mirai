@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -13,8 +13,12 @@ package net.mamoe.mirai.utils
 
 import me.him188.kotlin.jvm.blocking.bridge.JvmBlockingBridge
 import net.mamoe.mirai.Bot
+import net.mamoe.mirai.auth.BotAuthSession
+import net.mamoe.mirai.auth.BotAuthorization
+import net.mamoe.mirai.auth.QRCodeLoginListener
 import net.mamoe.mirai.network.LoginFailedException
 import net.mamoe.mirai.network.RetryLaterException
+import net.mamoe.mirai.network.UnsupportedQRCodeCaptchaException
 import net.mamoe.mirai.network.UnsupportedSmsLoginException
 import net.mamoe.mirai.utils.LoginSolver.Companion.Default
 import kotlin.jvm.JvmField
@@ -48,6 +52,19 @@ public abstract class LoginSolver {
      * 否则会跳过滑动验证码并告诉服务器此客户端不支持, 有可能导致登录失败
      */
     public open val isSliderCaptchaSupported: Boolean get() = PlatformLoginSolverImplementations.isSliderCaptchaSupported
+
+    /**
+     * 当使用二维码登录时会通过此方法创建二维码登录监听器
+     *
+     * @see QRCodeLoginListener
+     * @see BotAuthorization
+     * @see BotAuthSession.authByQRCode
+     *
+     * @since 2.15
+     */
+    public open fun createQRCodeLoginListener(bot: Bot): QRCodeLoginListener {
+        throw UnsupportedQRCodeCaptchaException("This login session requires QRCode login, but current LoginSolver($this) does not support it. Please override `LoginSolver.createQRCodeLoginListener`.")
+    }
 
     /**
      * 处理滑动验证码.
@@ -123,13 +140,8 @@ public abstract class LoginSolver {
         /**
          * 当前平台默认的 [LoginSolver]。
          *
-         * 检测策略:
-         * 1. 若是 `mirai-core-api-android` 或 `android.util.Log` 存在, 返回 `null`.
-         * 2. 检测 JVM 属性 `mirai.no-desktop`. 若存在, 返回 `StandardCharImageLoginSolver`
-         * 3. 检测 JVM 桌面环境, 若支持, 返回 `SwingSolver`
-         * 4. 返回 `StandardCharImageLoginSolver`
-         *
-         * @return `SwingSolver` 或 `StandardCharImageLoginSolver` 或 `null`
+         * 在 Android 环境时, 此函数返回 `null`.
+         * 在其他 JVM 环境时, 此函数返回一个默认实现, 它通常会是 [StandardCharImageLoginSolver][net.mamoe.mirai.utils.StandardCharImageLoginSolver], 但调用方不应该依赖该属性.
          */
         @JvmField
         public val Default: LoginSolver? = PlatformLoginSolverImplementations.default

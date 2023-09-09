@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -17,12 +17,18 @@ import net.mamoe.mirai.internal.network.handler.NetworkHandler
 import net.mamoe.mirai.internal.test.runBlockingUnit
 import net.mamoe.mirai.internal.utils.accountSecretsFile
 import net.mamoe.mirai.utils.DeviceInfo
+import net.mamoe.mirai.utils.SecretsProtection
 import net.mamoe.mirai.utils.getRandomByteArray
 import net.mamoe.mirai.utils.writeBytes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
 internal class AccountSecretsTest : AbstractCommonNHTest() {
+    init {
+        overrideComponents.remove(AccountSecretsManager)
+        bot.account.accountSecretsKeyBuffer = SecretsProtection.EscapedByteBuffer(ByteArray(16))
+    }
+
     @Test
     fun `can login with no secrets`() = runBlockingUnit {
         val file = bot.configuration.accountSecretsFile()
@@ -34,7 +40,7 @@ internal class AccountSecretsTest : AbstractCommonNHTest() {
     @Test
     fun `can login with good secrets`() = runBlockingUnit {
         val file = bot.configuration.accountSecretsFile()
-        val s = AccountSecretsImpl(DeviceInfo.random(), bot.account)
+        val s = AccountSecretsImpl(DeviceInfo.random())
         FileCacheAccountSecretsManager.saveSecretsToFile(file, bot.account, s)
         bot.login()
         bot.network.assertState(NetworkHandler.State.OK)

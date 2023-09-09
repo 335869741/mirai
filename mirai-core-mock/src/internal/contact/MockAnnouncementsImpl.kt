@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -21,10 +21,10 @@ import net.mamoe.mirai.contact.isOperator
 import net.mamoe.mirai.mock.contact.announcement.MockAnnouncements
 import net.mamoe.mirai.mock.contact.announcement.MockOnlineAnnouncement
 import net.mamoe.mirai.mock.contact.announcement.copy
-import net.mamoe.mirai.mock.utils.broadcastBlocking
+import net.mamoe.mirai.mock.utils.mock
 import net.mamoe.mirai.utils.ExternalResource
 import net.mamoe.mirai.utils.currentTimeSeconds
-import net.mamoe.mirai.utils.generateImageId
+import net.mamoe.mirai.utils.withAutoClose
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 import java.util.stream.Stream
@@ -55,9 +55,10 @@ internal class MockAnnouncementsImpl(
     }
 
     override fun mockPublish(announcement: Announcement, actor: NormalMember, events: Boolean): OnlineAnnouncement {
-        val old = if (announcement.parameters.sendToNewMember)
+        if (announcement.parameters.sendToNewMember) {
             announcements.elements().toList().firstOrNull { oa -> oa.parameters.sendToNewMember }
-        else null
+        }
+
         val ann = MockOnlineAnnouncement(
             content = announcement.content,
             parameters = announcement.parameters,
@@ -70,14 +71,6 @@ internal class MockAnnouncementsImpl(
         putDirect(ann)
         if (!events) return ann
 
-        @Suppress("DEPRECATION")
-        net.mamoe.mirai.event.events.GroupEntranceAnnouncementChangeEvent(
-            origin = old?.content.orEmpty(),
-            new = ann.content,
-            group = group,
-            operator = actor.takeUnless { it.id == group.bot.id }
-        ).broadcastBlocking()
-
         // TODO: mirai-core no other events about announcements
         return ann
     }
@@ -89,8 +82,8 @@ internal class MockAnnouncementsImpl(
         return mockPublish(announcement, this.group.botAsMember, true)
     }
 
-    override suspend fun uploadImage(resource: ExternalResource): AnnouncementImage = resource.inResource {
-        AnnouncementImage.create(generateImageId(resource.md5), 500, 500)
+    override suspend fun uploadImage(resource: ExternalResource): AnnouncementImage = resource.withAutoClose {
+        AnnouncementImage.create(group.bot.mock().uploadMockImage(resource).imageId, 500, 500)
     }
 
     override suspend fun members(fid: String, confirmed: Boolean): List<NormalMember> {

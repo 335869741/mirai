@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -418,9 +418,13 @@ internal class TroopManagement {
     }
 
     internal object ModifyAdmin : OutgoingPacketFactory<ModifyAdmin.Response>("OidbSvc.0x55c_1") {
-        data class Response(val success: Boolean, val msg: String) : Packet {
+        data class Response(
+            val code: Int,
+            val success: Boolean,
+            val msg: String,
+        ) : Packet {
             override fun toString(): String {
-                return "TroopManagement.ModifyAdmin.Response(success=${success}, msg=${msg})"
+                return "TroopManagement.ModifyAdmin.Response(code=${code}, success=${success}, msg=${msg})"
             }
         }
 
@@ -452,11 +456,62 @@ internal class TroopManagement {
             val stupidPacket = readProtoBuf(OidbSso.OIDBSSOPkg.serializer())
             return stupidPacket.run {
                 ModifyAdmin.Response(
+                    this.result,
                     this.result == 0,
                     this.errorMsg
                 )
             }
         }
 
+    }
+
+    internal object GetGroupLastMsgSeq : OutgoingPacketFactory<GetGroupLastMsgSeq.Response>("OidbSvc.0x88d_0") {
+        sealed class Response(val groupUin: Long, val seq: Int) : Packet {
+            object Failed : Response(-1, -1) {
+                override fun toString(): String {
+                    return "TroopManagement.GetGroupLastMsgSeq.Failed"
+                }
+            }
+
+            class Success(groupUin: Long, seq: Int) : Response(groupUin, seq) {
+                override fun toString(): String {
+                    return "TroopManagement.GetGroupLastMsgSeq.Response(groupUin=${groupUin}, seq=${seq})"
+                }
+            }
+        }
+
+        operator fun invoke(
+            client: QQAndroidClient,
+            groupUin: Long,
+        ) = buildOutgoingUniPacket(client) {
+            writeOidb(
+                2189,
+                0,
+                Oidb0x88d.ReqBody.serializer(),
+                Oidb0x88d.ReqBody(
+                    appid = client.subAppId.toInt(),
+                    stzreqgroupinfo = listOf(
+                        Oidb0x88d.ReqGroupInfo(
+                            groupCode = groupUin,
+                            stgroupinfo = Oidb0x88d.GroupInfo(groupCurMsgSeq = 0)
+                        )
+                    )
+                )
+            )
+        }
+
+        override suspend fun ByteReadPacket.decode(bot: QQAndroidBot): Response {
+            val resp = readOidbRespCommon(Oidb0x88d.RspBody.serializer()) { it.stzrspgroupinfo }
+                .toResult("OidbSvc.0x88d_0") { it == 0 }
+                .getOrNull() ?: return Response.Failed
+
+            check(resp.isNotEmpty()) { return Response.Failed }
+
+            val group = resp.first()
+            val info = group.stgroupinfo ?: return Response.Failed
+            val seq = info.groupCurMsgSeq ?: return Response.Failed
+
+            return Response.Success(group.groupCode, seq)
+        }
     }
 }

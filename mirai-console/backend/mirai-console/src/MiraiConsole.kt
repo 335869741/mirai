@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2022 Mamoe Technologies and contributors.
+ * Copyright 2019-2023 Mamoe Technologies and contributors.
  *
  * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
  * Use of this source code is governed by the GNU AGPLv3 license that can be found through the following link.
@@ -16,6 +16,7 @@ import kotlinx.coroutines.*
 import me.him188.kotlin.dynamic.delegation.dynamicDelegation
 import net.mamoe.mirai.Bot
 import net.mamoe.mirai.BotFactory
+import net.mamoe.mirai.auth.BotAuthorization
 import net.mamoe.mirai.console.MiraiConsole.INSTANCE
 import net.mamoe.mirai.console.MiraiConsoleImplementation.Companion.start
 import net.mamoe.mirai.console.extensions.BotConfigurationAlterer
@@ -132,13 +133,13 @@ public interface MiraiConsole : CoroutineScope {
      */
     @Deprecated(
         "Please use the standard way in mirai-core to create loggers, i.e. MiraiLogger.Factory.INSTANCE.create()",
-        level = DeprecationLevel.WARNING,
+        level = DeprecationLevel.ERROR,
         replaceWith = ReplaceWith(
             "MiraiLogger.Factory.create(yourClass::class, identity)",
             "net.mamoe.mirai.utils.MiraiLogger"
         ),
     )
-    @DeprecatedSinceMirai(warningSince = "2.13")
+    @DeprecatedSinceMirai(warningSince = "2.13", errorSince = "2.14") // for removal
     @ConsoleExperimentalApi
     public fun createLogger(identity: String?): MiraiLogger
 
@@ -158,7 +159,10 @@ public interface MiraiConsole : CoroutineScope {
      *
      * 对象以 [bridge][MiraiConsoleImplementationBridge] 实现, 将会桥接特定前端实现的 [MiraiConsoleImplementation] 到 [MiraiConsole].
      */
-    public companion object INSTANCE : MiraiConsole by dynamicDelegation({ MiraiConsoleImplementation.getBridge() }) {
+    public companion object INSTANCE : MiraiConsole by dynamicDelegation({
+        @OptIn(ConsoleFrontEndImplementation::class)
+        MiraiConsoleImplementation.getBridge()
+    }) {
         /**
          * 获取 [MiraiConsole] 的 [Job]
          */ // MiraiConsole.INSTANCE.getJob()
@@ -191,8 +195,31 @@ public interface MiraiConsole : CoroutineScope {
         public fun addBot(id: Long, password: ByteArray, configuration: BotConfiguration.() -> Unit = {}): Bot =
             addBotImpl(id, password, configuration)
 
-        @Suppress("UNREACHABLE_CODE")
-        private fun addBotImpl(id: Long, password: Any, configuration: BotConfiguration.() -> Unit = {}): Bot {
+        /**
+         * 添加一个 [Bot] 实例到全局 Bot 列表, 但不登录.
+         *
+         * 调用 [Bot.login] 可登录.
+         *
+         * @see Bot.instances 获取现有 [Bot] 实例列表
+         * @see BotConfigurationAlterer ExtensionPoint
+         */
+        @ConsoleExperimentalApi("This is a low-level API and might be removed in the future.")
+        public fun addBot(
+            id: Long,
+            authorization: BotAuthorization,
+            configuration: BotConfiguration.() -> Unit = {}
+        ): Bot = addBotImpl(id, authorization, configuration)
+
+        @OptIn(ConsoleFrontEndImplementation::class)
+        private fun addBotImpl(id: Long, authorization: Any, configuration: BotConfiguration.() -> Unit = {}): Bot {
+            when (authorization) {
+                is String -> {}
+                is ByteArray -> {}
+                is BotAuthorization -> {}
+
+                else -> throw IllegalArgumentException("Bad authorization type: `${authorization.javaClass.name}`. Require String, ByteArray or BotAuthorization")
+            }
+
             var config = BotConfiguration().apply {
 
                 workingDir = MiraiConsole.rootDir
@@ -239,10 +266,11 @@ public interface MiraiConsole : CoroutineScope {
                 extension.alterConfiguration(id, acc)
             }
 
-            return when (password) {
-                is ByteArray -> BotFactory.newBot(id, password, config)
-                is String -> BotFactory.newBot(id, password, config)
-                else -> throw IllegalArgumentException("Bad password type: `${password.javaClass.name}`. Require ByteArray or String")
+            return when (authorization) {
+                is ByteArray -> BotFactory.newBot(id, authorization, config)            // pwd md5
+                is String -> BotFactory.newBot(id, authorization, config)               // pwd
+                is BotAuthorization -> BotFactory.newBot(id, authorization, config)     // authorization
+                else -> error("assert")
             }
         }
 
@@ -260,7 +288,7 @@ public interface MiraiConsole : CoroutineScope {
         public fun shutdown() {
             val consoleJob = job
             if (!consoleJob.isActive) return
-            @OptIn(DelicateCoroutinesApi::class)
+            @OptIn(DelicateCoroutinesApi::class, ConsoleFrontEndImplementation::class)
             GlobalScope.launch {
                 MiraiConsoleImplementation.shutdown()
             }
@@ -282,6 +310,7 @@ public interface MiraiConsole : CoroutineScope {
         @ConsoleExperimentalApi
         @JvmStatic
         public fun newProcessProgress(): ProcessProgress {
+            @OptIn(ConsoleFrontEndImplementation::class)
             return MiraiConsoleImplementation.getInstance().createNewProcessProgress()
         }
     }
